@@ -1,0 +1,540 @@
+package com.wanghao.eldercare.eldercaresystem.medication;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wanghao.eldercare.eldercaresystem.careteam.CareTeamAssignmentRepository;
+import com.wanghao.eldercare.eldercaresystem.common.BusinessException;
+import com.wanghao.eldercare.eldercaresystem.common.ErrorCode;
+import com.wanghao.eldercare.eldercaresystem.common.NotFoundException;
+import com.wanghao.eldercare.eldercaresystem.security.CurrentUser;
+import com.wanghao.eldercare.eldercaresystem.security.PermissionService;
+import com.wanghao.eldercare.eldercaresystem.task.Task;
+import com.wanghao.eldercare.eldercaresystem.task.TaskRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+
+@Service
+public class MedicationService {
+
+    private static final DateTimeFormatter HH_MM = DateTimeFormatter.ofPattern("HH:mm");
+    private static final Set<String> PLAN_STATUS = Set.of("active", "paused", "ended");
+    private static final Set<String> RECORD_STATUS = Set.of("given", "refused", "missed", "delayed", "stopped");
+
+    private final MedicationRepository medicationRepository;
+    private final MedicationPlanRepository medicationPlanRepository;
+    private final MedicationAdminRecordRepository medicationAdminRecordRepository;
+    private final PermissionService permissionService;
+    private final TaskRepository taskRepository;
+    private final CareTeamAssignmentRepository careTeamAssignmentRepository;
+    private final ObjectMapper objectMapper;
+
+    public MedicationService(MedicationRepository medicationRepository,
+                             MedicationPlanRepository medicationPlanRepository,
+                             MedicationAdminRecordRepository medicationAdminRecordRepository,
+                             PermissionService permissionService,
+                             TaskRepository taskRepository,
+                             CareTeamAssignmentRepository careTeamAssignmentRepository,
+                             ObjectMapper objectMapper) {
+        this.medicationRepository = medicationRepository;
+        this.medicationPlanRepository = medicationPlanRepository;
+        this.medicationAdminRecordRepository = medicationAdminRecordRepository;
+        this.permissionService = permissionService;
+        this.taskRepository = taskRepository;
+        this.careTeamAssignmentRepository = careTeamAssignmentRepository;
+        this.objectMapper = objectMapper;
+    }
+
+    @Transactional(readOnly = true)
+    public MedicationListResponse listMedications(String keyword, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+        String q = (keyword == null || keyword.isBlank()) ? null : keyword.trim();
+        Page<Medication> result = medicationRepository.searchByKeyword(q, pageable);
+
+        MedicationListResponse response = new MedicationListResponse();
+        response.setContent(result.getContent().stream().map(MedicationDTO::from).toList());
+        response.setTotalElements(result.getTotalElements());
+        response.setPage(page);
+        response.setSize(size);
+        return response;
+    }
+
+    @Transactional
+    public MedicationDTO createMedication(CurrentUser currentUser, CreateMedicationRequest request) {
+        requireCatalogManager(currentUser);
+        Medication medication = new Medication();
+        medication.setMedicationName(request.getMedicationName().trim());
+        medication.setSpec(request.getSpec());
+        medication.setUnit(request.getUnit());
+        medication.setDescription(request.getDescription());
+        medication.setCreatedAt(LocalDateTime.now());
+        return MedicationDTO.from(medicationRepository.save(medication));
+    }
+
+    @Transactional
+    public MedicationDTO updateMedication(CurrentUser currentUser, Long id, CreateMedicationRequest request) {
+        requireCatalogManager(currentUser);
+        Medication medication = medicationRepository.findById(id).orElseThrow(() -> new NotFoundException("药品不存在"));
+        medication.setMedicationName(request.getMedicationName().trim());
+        medication.setSpec(request.getSpec());
+        medication.setUnit(request.getUnit());
+        medication.setDescription(request.getDescription());
+        return MedicationDTO.from(medicationRepository.save(medication));
+    }
+
+    @Transactional
+    public void deleteMedication(CurrentUser currentUser, Long id) {
+        requireCatalogManager(currentUser);
+        Medication medication = medicationRepository.findById(id).orElseThrow(() -> new NotFoundException("药品不存在"));
+        if (medicationPlanRepository.existsByMedicationId(id)) {
+            throw badRequest("药品已被用药计划引用，不能删除");
+        }
+        medicationRepository.delete(medication);
+    }
+
+    @Transactional(readOnly = true)
+    public MedicationPlanListResponse listPlans(CurrentUser currentUser, Long elderId, String status, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+        String normalizedStatus = (status == null || status.isBlank()) ? null : normalizeStatus(status);
+
+        Page<MedicationPlan> result;
+        if (elderId != null) {
+            assertCanReadElder(currentUser, elderId);
+            if (normalizedStatus == null) {
+                result = medicationPlanRepository.findByElderId(elderId, pageable);
+            } else {
+                result = medicationPlanRepository.findByElderIdAndStatus(elderId, normalizedStatus, pageable);
+            }
+        } else {
+            List<Long> visibleElderIds = permissionService.getVisibleElderIds(currentUser);
+            if (visibleElderIds == null) {
+                result = normalizedStatus == null
+                        ? medicationPlanRepository.findAll(pageable)
+                        : medicationPlanRepository.findByStatus(normalizedStatus, pageable);
+            } else if (visibleElderIds.isEmpty()) {
+                result = Page.empty(pageable);
+            } else {
+                result = normalizedStatus == null
+                        ? medicationPlanRepository.findByElderIdIn(visibleElderIds, pageable)
+                        : medicationPlanRepository.findByElderIdInAndStatus(visibleElderIds, normalizedStatus, pageable);
+            }
+        }
+
+        MedicationPlanListResponse response = new MedicationPlanListResponse();
+        response.setContent(result.getContent().stream().map(this::toPlanDTO).toList());
+        response.setTotalElements(result.getTotalElements());
+        response.setPage(page);
+        response.setSize(size);
+        return response;
+    }
+
+    @Transactional
+    public MedicationPlanDTO createPlan(CurrentUser currentUser, CreateMedicationPlanRequest request) {
+        requirePlanWriter(currentUser);
+        permissionService.assertCanAccessElder(currentUser, request.getElderId());
+
+        Medication medication = medicationRepository.findById(request.getMedicationId())
+                .orElseThrow(() -> new NotFoundException("药品不存在"));
+
+        List<String> normalizedTimes = validateAndNormalizeTimes(request.getTimes());
+        validateDateRange(request.getStartDate(), request.getEndDate());
+
+        LocalDateTime now = LocalDateTime.now();
+        MedicationPlan plan = new MedicationPlan();
+        plan.setElderId(request.getElderId());
+        plan.setMedicationId(request.getMedicationId());
+        plan.setDosage(request.getDosage());
+        plan.setFrequency(normalizeSimple(request.getFrequency()));
+        plan.setTimesJson(writeJson(normalizedTimes));
+        plan.setStartDate(request.getStartDate());
+        plan.setEndDate(request.getEndDate());
+        plan.setStatus("active");
+        plan.setCreatedBy(currentUser.getUserId());
+        plan.setCreatedAt(now);
+        plan.setUpdatedAt(now);
+
+        MedicationPlan saved = medicationPlanRepository.save(plan);
+        createMedicationTasksForPlan(saved, medication.getMedicationName(), currentUser.getUserId());
+        return toPlanDTO(saved);
+    }
+
+    @Transactional
+    public MedicationPlanDTO updatePlan(CurrentUser currentUser, Long planId, UpdateMedicationPlanRequest request) {
+        requirePlanWriter(currentUser);
+        MedicationPlan plan = medicationPlanRepository.findById(planId)
+                .orElseThrow(() -> new NotFoundException("用药计划不存在"));
+        permissionService.assertCanAccessElder(currentUser, plan.getElderId());
+
+        if ("ended".equalsIgnoreCase(plan.getStatus())) {
+            throw badRequest("已结束的用药计划不可编辑");
+        }
+
+        medicationRepository.findById(request.getMedicationId())
+                .orElseThrow(() -> new NotFoundException("药品不存在"));
+
+        List<String> normalizedTimes = validateAndNormalizeTimes(request.getTimes());
+        validateDateRange(request.getStartDate(), request.getEndDate());
+
+        plan.setMedicationId(request.getMedicationId());
+        plan.setDosage(request.getDosage());
+        plan.setFrequency(normalizeSimple(request.getFrequency()));
+        plan.setTimesJson(writeJson(normalizedTimes));
+        plan.setStartDate(request.getStartDate());
+        plan.setEndDate(request.getEndDate());
+        plan.setUpdatedAt(LocalDateTime.now());
+        return toPlanDTO(medicationPlanRepository.save(plan));
+    }
+
+    @Transactional
+    public MedicationPlanDTO patchPlanStatus(CurrentUser currentUser, Long planId, PatchMedicationPlanStatusRequest request) {
+        requirePlanWriter(currentUser);
+        MedicationPlan plan = medicationPlanRepository.findById(planId)
+                .orElseThrow(() -> new NotFoundException("用药计划不存在"));
+        permissionService.assertCanAccessElder(currentUser, plan.getElderId());
+
+        String from = normalizeStatus(request.getFrom());
+        String to = normalizeStatus(request.getTo());
+        validatePlanTransition(from, to);
+
+        int updated = medicationPlanRepository.updateStatusIfMatch(planId, from, to, LocalDateTime.now());
+        if (updated == 0) {
+            String currentStatus = medicationPlanRepository.findStatusByPlanId(planId).orElse("unknown");
+            throw badRequest("状态不匹配，当前状态=" + currentStatus);
+        }
+        return toPlanDTO(medicationPlanRepository.findById(planId).orElseThrow(() -> new NotFoundException("用药计划不存在")));
+    }
+
+    @Transactional(readOnly = true)
+    public MedicationAdminRecordListResponse listRecords(CurrentUser currentUser,
+                                                         Long elderId,
+                                                         LocalDateTime from,
+                                                         LocalDateTime to,
+                                                         String status,
+                                                         int page,
+                                                         int size) {
+        Specification<MedicationAdminRecord> spec = Specification.where(null);
+        if (elderId != null) {
+            assertCanReadElder(currentUser, elderId);
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("elderId"), elderId));
+        } else {
+            List<Long> visibleElderIds = permissionService.getVisibleElderIds(currentUser);
+            if (visibleElderIds != null) {
+                if (visibleElderIds.isEmpty()) {
+                    MedicationAdminRecordListResponse response = new MedicationAdminRecordListResponse();
+                    response.setContent(List.of());
+                    response.setTotalElements(0);
+                    response.setPage(page);
+                    response.setSize(size);
+                    return response;
+                }
+                spec = spec.and((root, query, cb) -> root.get("elderId").in(visibleElderIds));
+            }
+        }
+        if (from != null) {
+            spec = spec.and((root, query, cb) -> cb.greaterThanOrEqualTo(root.get("administeredTime"), from));
+        }
+        if (to != null) {
+            spec = spec.and((root, query, cb) -> cb.lessThanOrEqualTo(root.get("administeredTime"), to));
+        }
+        if (status != null && !status.isBlank()) {
+            String normalizedStatus = normalizeRecordStatus(status);
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("status"), normalizedStatus));
+        }
+
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "administeredTime"));
+        Page<MedicationAdminRecord> result = medicationAdminRecordRepository.findAll(spec, pageable);
+
+        MedicationAdminRecordListResponse response = new MedicationAdminRecordListResponse();
+        response.setContent(result.getContent().stream().map(this::toRecordDTO).toList());
+        response.setTotalElements(result.getTotalElements());
+        response.setPage(page);
+        response.setSize(size);
+        return response;
+    }
+
+    @Transactional
+    public MedicationAdminRecordDTO createRecord(CurrentUser currentUser, CreateMedicationAdminRecordRequest request) {
+        requirePlanWriter(currentUser);
+        permissionService.assertCanAccessElder(currentUser, request.getElderId());
+
+        medicationRepository.findById(request.getMedicationId())
+                .orElseThrow(() -> new NotFoundException("药品不存在"));
+
+        if (request.getPlanId() != null) {
+            MedicationPlan plan = medicationPlanRepository.findById(request.getPlanId())
+                    .orElseThrow(() -> new NotFoundException("用药计划不存在"));
+            if (!plan.getElderId().equals(request.getElderId())) {
+                throw badRequest("planId与elderId不匹配");
+            }
+            if (!plan.getMedicationId().equals(request.getMedicationId())) {
+                throw badRequest("planId与medicationId不匹配");
+            }
+        }
+
+        String normalizedStatus = normalizeRecordStatus(request.getStatus());
+        LocalDateTime now = LocalDateTime.now();
+
+        MedicationAdminRecord record = new MedicationAdminRecord();
+        record.setElderId(request.getElderId());
+        record.setMedicationId(request.getMedicationId());
+        record.setPlanId(request.getPlanId());
+        record.setAdministeredTime(request.getAdministeredTime() == null ? now : request.getAdministeredTime());
+        record.setAdministeredBy(currentUser.getUserId());
+        record.setStatus(normalizedStatus);
+        record.setDosage(request.getDosage());
+        record.setNote(request.getNote());
+        record.setCreatedAt(now);
+
+        MedicationAdminRecord saved = medicationAdminRecordRepository.save(record);
+        syncPlanTaskAfterAdminRecord(saved, currentUser.getUserId());
+        return toRecordDTO(saved);
+    }
+
+    private void createMedicationTasksForPlan(MedicationPlan plan, String medicationName, Long actorId) {
+        List<String> times = parseTimesJson(plan.getTimesJson());
+        if (times.isEmpty()) {
+            return;
+        }
+
+        LocalDate today = LocalDate.now();
+        LocalDate horizonEnd = today.plusDays(1);
+        LocalDate fromDate = plan.getStartDate().isAfter(today) ? plan.getStartDate() : today;
+        LocalDate endDate = plan.getEndDate() == null ? horizonEnd : (plan.getEndDate().isBefore(horizonEnd) ? plan.getEndDate() : horizonEnd);
+
+        if (fromDate.isAfter(endDate)) {
+            return;
+        }
+
+        List<Long> nurses = careTeamAssignmentRepository.findActiveNurseIdsByElderId(plan.getElderId());
+        Long assignedTo = nurses.isEmpty() ? null : nurses.get(0);
+
+        LocalDate date = fromDate;
+        while (!date.isAfter(endDate)) {
+            for (String time : times) {
+                LocalTime lt = LocalTime.parse(time, HH_MM);
+                LocalDateTime dueAt = LocalDateTime.of(date, lt);
+                if (dueAt.isBefore(LocalDateTime.now().minusMinutes(1))) {
+                    continue;
+                }
+                Task task = new Task();
+                task.setElderId(plan.getElderId());
+                task.setTaskType("medication");
+                task.setTitle("给药：" + medicationName + " " + plan.getDosage() + "（" + time + "）");
+                task.setDescription("频次: " + plan.getFrequency());
+                task.setPriority("high");
+                task.setStatus("pending");
+                task.setDueAt(dueAt);
+                task.setAssignedTo(assignedTo);
+                task.setCreatedBy(actorId);
+                task.setRelatedBizType("med_plan");
+                task.setRelatedBizId(plan.getPlanId());
+                task.setCreatedAt(LocalDateTime.now());
+                task.setUpdatedAt(LocalDateTime.now());
+                taskRepository.save(task);
+            }
+            date = date.plusDays(1);
+        }
+    }
+
+    private void syncPlanTaskAfterAdminRecord(MedicationAdminRecord record, Long operatorId) {
+        if (record.getPlanId() == null) {
+            return;
+        }
+        if (!("given".equals(record.getStatus()) || "refused".equals(record.getStatus()) || "missed".equals(record.getStatus()))) {
+            return;
+        }
+
+        List<Task> candidates = taskRepository.findByRelatedBizTypeAndRelatedBizIdAndTaskTypeAndStatusIn(
+                "med_plan",
+                record.getPlanId(),
+                "medication",
+                List.of("pending", "in_progress", "overdue")
+        );
+        if (candidates.isEmpty()) {
+            return;
+        }
+
+        Task nearest = null;
+        long minSeconds = Long.MAX_VALUE;
+        for (Task task : candidates) {
+            LocalDateTime dueAt = task.getDueAt();
+            long diff;
+            if (dueAt == null) {
+                diff = Long.MAX_VALUE - 1;
+            } else {
+                diff = Math.abs(ChronoUnit.SECONDS.between(dueAt, record.getAdministeredTime()));
+            }
+            if (diff < minSeconds) {
+                minSeconds = diff;
+                nearest = task;
+            }
+        }
+
+        if (nearest == null) {
+            return;
+        }
+
+        if ("given".equals(record.getStatus())) {
+            LocalDateTime now = LocalDateTime.now();
+            taskRepository.completeIfMatch(nearest.getTaskId(), List.of("pending", "in_progress", "overdue"), operatorId, now, now);
+            return;
+        }
+
+        taskRepository.updateStatusIfMatch(nearest.getTaskId(), List.of("pending", "in_progress", "overdue"), "cancelled", LocalDateTime.now());
+    }
+
+    private MedicationPlanDTO toPlanDTO(MedicationPlan plan) {
+        MedicationPlanDTO dto = new MedicationPlanDTO();
+        dto.setPlanId(plan.getPlanId());
+        dto.setElderId(plan.getElderId());
+        dto.setMedicationId(plan.getMedicationId());
+        dto.setDosage(plan.getDosage());
+        dto.setFrequency(plan.getFrequency());
+        dto.setTimes(parseTimesJson(plan.getTimesJson()));
+        dto.setStartDate(plan.getStartDate());
+        dto.setEndDate(plan.getEndDate());
+        dto.setStatus(plan.getStatus());
+        dto.setCreatedBy(plan.getCreatedBy());
+        dto.setCreatedAt(plan.getCreatedAt());
+        dto.setUpdatedAt(plan.getUpdatedAt());
+        return dto;
+    }
+
+    private MedicationAdminRecordDTO toRecordDTO(MedicationAdminRecord record) {
+        MedicationAdminRecordDTO dto = new MedicationAdminRecordDTO();
+        dto.setRecordId(record.getRecordId());
+        dto.setElderId(record.getElderId());
+        dto.setMedicationId(record.getMedicationId());
+        dto.setPlanId(record.getPlanId());
+        dto.setAdministeredTime(record.getAdministeredTime());
+        dto.setAdministeredBy(record.getAdministeredBy());
+        dto.setStatus(record.getStatus());
+        dto.setDosage(record.getDosage());
+        dto.setNote(record.getNote());
+        dto.setCreatedAt(record.getCreatedAt());
+        return dto;
+    }
+
+    private void validateDateRange(LocalDate startDate, LocalDate endDate) {
+        if (endDate != null && endDate.isBefore(startDate)) {
+            throw badRequest("endDate不能早于startDate");
+        }
+    }
+
+    private List<String> validateAndNormalizeTimes(List<String> times) {
+        List<String> normalized = new ArrayList<>();
+        for (String time : times) {
+            if (time == null || time.isBlank()) {
+                throw badRequest("times包含空值");
+            }
+            try {
+                LocalTime parsed = LocalTime.parse(time.trim(), HH_MM);
+                normalized.add(parsed.format(HH_MM));
+            } catch (DateTimeParseException ex) {
+                throw badRequest("times格式错误，应为HH:mm");
+            }
+        }
+        return normalized;
+    }
+
+    private void validatePlanTransition(String from, String to) {
+        if (from.equals(to)) {
+            throw badRequest("from和to不能相同");
+        }
+        boolean valid = ("active".equals(from) && ("paused".equals(to) || "ended".equals(to)))
+                || ("paused".equals(from) && ("active".equals(to) || "ended".equals(to)));
+        if (!valid) {
+            throw badRequest("不支持的状态迁移: " + from + " -> " + to);
+        }
+    }
+
+    private String normalizeStatus(String status) {
+        String normalized = normalizeSimple(status);
+        if (!PLAN_STATUS.contains(normalized)) {
+            throw badRequest("非法计划状态: " + status);
+        }
+        return normalized;
+    }
+
+    private String normalizeRecordStatus(String status) {
+        String normalized = normalizeSimple(status);
+        if (!RECORD_STATUS.contains(normalized)) {
+            throw badRequest("非法给药记录状态: " + status);
+        }
+        return normalized;
+    }
+
+    private String normalizeSimple(String value) {
+        if (value == null) {
+            return null;
+        }
+        return value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private void requireCatalogManager(CurrentUser currentUser) {
+        if (currentUser.hasRole("admin")) {
+            return;
+        }
+        throw new AccessDeniedException("仅管理员可维护药品库");
+    }
+
+    private void requirePlanWriter(CurrentUser currentUser) {
+        if (currentUser.hasRole("admin") || currentUser.hasRole("nurse_leader")
+                || currentUser.hasRole("nurse") || currentUser.hasRole("caregiver")) {
+            return;
+        }
+        throw new AccessDeniedException("当前角色无权限维护用药计划/给药记录");
+    }
+
+    private void assertCanReadElder(CurrentUser currentUser, Long elderId) {
+        if (currentUser.hasRole("admin") || currentUser.hasRole("nurse_leader")
+                || currentUser.hasRole("nurse") || currentUser.hasRole("caregiver")
+                || currentUser.hasRole("family") || currentUser.hasRole("elder")) {
+            permissionService.assertCanAccessElder(currentUser, elderId);
+            return;
+        }
+        throw new AccessDeniedException("当前角色无权限访问用药数据");
+    }
+
+    private String writeJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            throw badRequest("JSON序列化失败");
+        }
+    }
+
+    private List<String> parseTimesJson(String timesJson) {
+        if (timesJson == null || timesJson.isBlank()) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(timesJson, new TypeReference<>() {
+            });
+        } catch (JsonProcessingException e) {
+            throw badRequest("times_json解析失败");
+        }
+    }
+
+    private BusinessException badRequest(String message) {
+        return new BusinessException(ErrorCode.BAD_REQUEST, message, HttpStatus.BAD_REQUEST);
+    }
+}
