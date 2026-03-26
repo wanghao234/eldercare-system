@@ -194,7 +194,7 @@ CREATE TABLE wf_tasks (
   wf_task_id BIGINT PRIMARY KEY AUTO_INCREMENT,
   instance_id BIGINT NOT NULL,
   node_key VARCHAR(64) NOT NULL,
-  task_name VARCHAR(128),
+  node_name VARCHAR(128),
   assignee_id BIGINT,
   candidate_role VARCHAR(32),
   status VARCHAR(32) NOT NULL,
@@ -215,8 +215,7 @@ CREATE TABLE wf_task_action (
   actor_id BIGINT NOT NULL,
   action_time DATETIME NOT NULL,
   comment TEXT,
-  form_data_json TEXT,
-  attachments_json TEXT
+  extra_json TEXT
 );
 
 CREATE TABLE visit_requests (
@@ -612,14 +611,16 @@ CREATE TABLE qc_issues (
 
 CREATE TABLE buildings (
   building_id BIGINT PRIMARY KEY AUTO_INCREMENT,
-  building_name VARCHAR(128) NOT NULL
+  building_name VARCHAR(128) NOT NULL,
+  deleted_at DATETIME
 );
 
 CREATE TABLE floors (
   floor_id BIGINT PRIMARY KEY AUTO_INCREMENT,
   building_id BIGINT,
   floor_no INT NOT NULL,
-  floor_name VARCHAR(64)
+  floor_name VARCHAR(64),
+  deleted_at DATETIME
 );
 
 CREATE TABLE rooms (
@@ -639,6 +640,7 @@ CREATE TABLE beds (
   bed_no VARCHAR(64),
   bed_code VARCHAR(64),
   status VARCHAR(32) NOT NULL DEFAULT 'available',
+  deleted_at DATETIME,
   CONSTRAINT uk_room_bed_code UNIQUE (room_id, bed_code)
 );
 
@@ -646,14 +648,16 @@ CREATE TABLE admission_records (
   admission_id BIGINT PRIMARY KEY AUTO_INCREMENT,
   elder_id BIGINT NOT NULL,
   bed_id BIGINT NOT NULL,
-  status VARCHAR(32) NOT NULL,
-  start_date DATE,
+  contract_no VARCHAR(64),
+  package_name VARCHAR(128),
+  deposit_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  start_date DATE NOT NULL,
   end_date DATE,
-  deposit_amount DECIMAL(10,2),
-  notes TEXT,
+  status VARCHAR(32) NOT NULL,
   created_by BIGINT,
   created_at DATETIME,
-  updated_at DATETIME
+  updated_at DATETIME,
+  process_instance_id BIGINT
 );
 
 CREATE TABLE discharge_records (

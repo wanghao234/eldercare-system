@@ -1,25 +1,30 @@
 package com.wanghao.eldercare.eldercaresystem.common;
 
-import com.wanghao.eldercare.eldercaresystem.audit.AuditActionResolver;
-import com.wanghao.eldercare.eldercaresystem.audit.AuditService;
-import jakarta.servlet.http.HttpServletRequest;
+import com.wanghao.eldercare.eldercaresystem.common.audit.*;
+import com.wanghao.eldercare.eldercaresystem.common.audit.AuditActionResolver;
+import com.wanghao.eldercare.eldercaresystem.common.security.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.perm.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.rbac.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.scope.*;
+import com.wanghao.eldercare.eldercaresystem.common.ws.*;
+import com.wanghao.eldercare.eldercaresystem.service.audit.AuditService;
 import jakarta.persistence.EntityNotFoundException;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.AccessDeniedException;
-import org.springframework.security.core.AuthenticationException;
-import org.springframework.validation.BindingResult;
-import org.springframework.validation.BindException;
-import org.springframework.validation.FieldError;
-import org.springframework.web.multipart.MaxUploadSizeExceededException;
-import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.http.converter.HttpMessageNotReadableException;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.RestControllerAdvice;
-
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.validation.BindException;
+import org.springframework.validation.BindingResult;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -52,9 +57,12 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler({ConstraintViolationException.class, IllegalArgumentException.class})
     public ResponseEntity<ApiResponse<Void>> handleBadRequest(Exception ex, HttpServletRequest request) {
-        writeFailAudit(request, ErrorCode.BAD_REQUEST, "请求参数错误");
+        String message = (ex.getMessage() == null || ex.getMessage().isBlank())
+                ? "请求参数错误"
+                : ex.getMessage();
+        writeFailAudit(request, ErrorCode.BAD_REQUEST, message);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .body(ApiResponse.error(ErrorCode.BAD_REQUEST, "请求参数错误"));
+                .body(ApiResponse.error(ErrorCode.BAD_REQUEST, message));
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)

@@ -2,16 +2,44 @@ package com.wanghao.eldercare.eldercaresystem.profile;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.wanghao.eldercare.eldercaresystem.audit.AuditLog;
-import com.wanghao.eldercare.eldercaresystem.audit.AuditLogRepository;
-import com.wanghao.eldercare.eldercaresystem.careteam.CareTeamAssignment;
-import com.wanghao.eldercare.eldercaresystem.careteam.CareTeamAssignmentRepository;
-import com.wanghao.eldercare.eldercaresystem.profile.entity.ElderProfileEntity;
-import com.wanghao.eldercare.eldercaresystem.profile.entity.StaffProfileEntity;
-import com.wanghao.eldercare.eldercaresystem.profile.repo.ElderProfileRepository;
-import com.wanghao.eldercare.eldercaresystem.profile.repo.StaffProfileRepository;
-import com.wanghao.eldercare.eldercaresystem.user.User;
-import com.wanghao.eldercare.eldercaresystem.user.UserRepository;
+import com.wanghao.eldercare.eldercaresystem.common.*;
+import com.wanghao.eldercare.eldercaresystem.common.audit.*;
+import com.wanghao.eldercare.eldercaresystem.common.profile.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.perm.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.rbac.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.scope.*;
+import com.wanghao.eldercare.eldercaresystem.common.ws.*;
+import com.wanghao.eldercare.eldercaresystem.controller.profile.*;
+import com.wanghao.eldercare.eldercaresystem.dto.profile.*;
+import com.wanghao.eldercare.eldercaresystem.entity.admission.AdmissionRecord;
+import com.wanghao.eldercare.eldercaresystem.entity.audit.AuditLog;
+import com.wanghao.eldercare.eldercaresystem.entity.careteam.CareTeamAssignment;
+import com.wanghao.eldercare.eldercaresystem.entity.facility.FacilityBed;
+import com.wanghao.eldercare.eldercaresystem.entity.facility.FacilityBuilding;
+import com.wanghao.eldercare.eldercaresystem.entity.facility.FacilityFloor;
+import com.wanghao.eldercare.eldercaresystem.entity.facility.FacilityRoom;
+import com.wanghao.eldercare.eldercaresystem.entity.profile.*;
+import com.wanghao.eldercare.eldercaresystem.entity.profile.ElderProfileEntity;
+import com.wanghao.eldercare.eldercaresystem.entity.profile.StaffProfileEntity;
+import com.wanghao.eldercare.eldercaresystem.entity.user.User;
+import com.wanghao.eldercare.eldercaresystem.mapper.admission.AdmissionRecordRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.audit.AuditLogRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.careteam.CareTeamAssignmentRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.facility.FacilityBedRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.facility.FacilityBuildingRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.facility.FacilityFloorRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.facility.FacilityRoomRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.profile.*;
+import com.wanghao.eldercare.eldercaresystem.mapper.profile.ElderProfileRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.profile.StaffProfileRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.user.UserRepository;
+import com.wanghao.eldercare.eldercaresystem.service.profile.*;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.Comparator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,11 +50,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-
-import java.nio.charset.StandardCharsets;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.util.Comparator;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.nullValue;
@@ -65,8 +88,28 @@ class ProfileModuleTests {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
+    @Autowired
+    private AdmissionRecordRepository admissionRecordRepository;
+
+    @Autowired
+    private FacilityBuildingRepository facilityBuildingRepository;
+
+    @Autowired
+    private FacilityFloorRepository facilityFloorRepository;
+
+    @Autowired
+    private FacilityRoomRepository facilityRoomRepository;
+
+    @Autowired
+    private FacilityBedRepository facilityBedRepository;
+
     @BeforeEach
     void setUp() {
+        admissionRecordRepository.deleteAll();
+        facilityBedRepository.deleteAll();
+        facilityRoomRepository.deleteAll();
+        facilityFloorRepository.deleteAll();
+        facilityBuildingRepository.deleteAll();
         careTeamAssignmentRepository.deleteAll();
         elderProfileRepository.deleteAll();
         staffProfileRepository.deleteAll();
@@ -230,6 +273,33 @@ class ProfileModuleTests {
                 .andExpect(jsonPath("$.data.idNumber").value("320101194202021234"));
     }
 
+    @Test
+    void list_elders_should_include_username_and_bed_location_fields() throws Exception {
+        createUser("adminP3", "admin");
+        User elder = createUser("elderP7", "elder");
+        saveElderProfile(elder.getUserId(), "320101199001011234");
+        FacilityBed bed = createFacilityBed("A栋", 3, "3层", "301", "A01");
+        createActiveAdmission(elder.getUserId(), bed.getBedId());
+
+        String adminToken = loginAndGetToken("adminP3", "123456");
+
+        mockMvc.perform(get("/api/profiles/elders")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("page", "0")
+                        .param("size", "500"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.content[0].elderId").value(elder.getUserId()))
+                .andExpect(jsonPath("$.data.content[0].username").value("elderP7"))
+                .andExpect(jsonPath("$.data.content[0].realName").value("elderP7"))
+                .andExpect(jsonPath("$.data.content[0].bedId").value(bed.getBedId()))
+                .andExpect(jsonPath("$.data.content[0].bedCode").value("A01"))
+                .andExpect(jsonPath("$.data.content[0].roomNumber").value("301"))
+                .andExpect(jsonPath("$.data.content[0].floorNo").value(3))
+                .andExpect(jsonPath("$.data.content[0].floorName").value("3层"))
+                .andExpect(jsonPath("$.data.content[0].buildingName").value("A栋"));
+    }
+
     private User createUser(String username, String role) {
         User user = new User();
         user.setUsername(username);
@@ -292,5 +362,42 @@ class ProfileModuleTests {
         String body = result.getResponse().getContentAsString(StandardCharsets.UTF_8);
         JsonNode root = objectMapper.readTree(body);
         return root.path("data").path("token").asText();
+    }
+
+    private FacilityBed createFacilityBed(String buildingName, int floorNo, String floorName, String roomNumber, String bedCode) {
+        FacilityBuilding building = new FacilityBuilding();
+        building.setBuildingName(buildingName);
+        building = facilityBuildingRepository.save(building);
+
+        FacilityFloor floor = new FacilityFloor();
+        floor.setBuildingId(building.getBuildingId());
+        floor.setFloorNo(floorNo);
+        floor.setFloorName(floorName);
+        floor = facilityFloorRepository.save(floor);
+
+        FacilityRoom room = new FacilityRoom();
+        room.setFloorId(floor.getFloorId());
+        room.setRoomNumber(roomNumber);
+        room.setRoomType("double");
+        room.setStatus("active");
+        room = facilityRoomRepository.save(room);
+
+        FacilityBed bed = new FacilityBed();
+        bed.setRoomId(room.getRoomId());
+        bed.setBedCode(bedCode);
+        bed.setStatus("occupied");
+        return facilityBedRepository.save(bed);
+    }
+
+    private AdmissionRecord createActiveAdmission(Long elderId, Long bedId) {
+        AdmissionRecord record = new AdmissionRecord();
+        record.setElderId(elderId);
+        record.setBedId(bedId);
+        record.setStatus("active");
+        record.setStartDate(LocalDate.now());
+        record.setDepositAmount(BigDecimal.ZERO);
+        record.setCreatedAt(LocalDateTime.now());
+        record.setUpdatedAt(LocalDateTime.now());
+        return admissionRecordRepository.save(record);
     }
 }

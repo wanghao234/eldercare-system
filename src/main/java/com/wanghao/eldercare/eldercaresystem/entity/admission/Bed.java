@@ -1,0 +1,68 @@
+package com.wanghao.eldercare.eldercaresystem.entity.admission;
+
+import com.wanghao.eldercare.eldercaresystem.common.*;
+import com.wanghao.eldercare.eldercaresystem.common.audit.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.perm.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.rbac.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.scope.*;
+import com.wanghao.eldercare.eldercaresystem.common.ws.*;
+import com.wanghao.eldercare.eldercaresystem.controller.admission.*;
+import com.wanghao.eldercare.eldercaresystem.dto.admission.*;
+import com.wanghao.eldercare.eldercaresystem.mapper.admission.*;
+import com.wanghao.eldercare.eldercaresystem.service.admission.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import jakarta.persistence.*;
+
+@Entity
+@Table(name = "beds")
+public class Bed {
+
+    @Id
+    @Column(name = "bed_id")
+    private Long bedId;
+
+    @Column(name = "room_id")
+    private Long roomId;
+
+    @Column(name = "bed_code", length = 64)
+    private String bedNo;
+
+    @Column(name = "status", length = 32)
+    private String status;
+
+    public Long getBedId() {
+        return bedId;
+    }
+
+    public void setBedId(Long bedId) {
+        this.bedId = bedId;
+    }
+
+    public Long getRoomId() {
+        return roomId;
+    }
+
+    public void setRoomId(Long roomId) {
+        this.roomId = roomId;
+    }
+
+    public String getBedNo() {
+        return bedNo;
+    }
+
+    public void setBedNo(String bedNo) {
+        this.bedNo = bedNo;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
+    }
+}

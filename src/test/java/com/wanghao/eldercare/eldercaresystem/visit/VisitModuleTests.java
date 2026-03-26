@@ -2,10 +2,24 @@ package com.wanghao.eldercare.eldercaresystem.visit;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.wanghao.eldercare.eldercaresystem.careteam.CareTeamAssignment;
-import com.wanghao.eldercare.eldercaresystem.careteam.CareTeamAssignmentRepository;
-import com.wanghao.eldercare.eldercaresystem.user.User;
-import com.wanghao.eldercare.eldercaresystem.user.UserRepository;
+import com.wanghao.eldercare.eldercaresystem.common.*;
+import com.wanghao.eldercare.eldercaresystem.common.audit.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.perm.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.rbac.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.scope.*;
+import com.wanghao.eldercare.eldercaresystem.common.ws.*;
+import com.wanghao.eldercare.eldercaresystem.controller.visit.*;
+import com.wanghao.eldercare.eldercaresystem.dto.visit.*;
+import com.wanghao.eldercare.eldercaresystem.entity.careteam.CareTeamAssignment;
+import com.wanghao.eldercare.eldercaresystem.entity.user.User;
+import com.wanghao.eldercare.eldercaresystem.entity.visit.*;
+import com.wanghao.eldercare.eldercaresystem.mapper.careteam.CareTeamAssignmentRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.user.UserRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.visit.*;
+import com.wanghao.eldercare.eldercaresystem.service.visit.*;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,9 +30,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-
-import java.nio.charset.StandardCharsets;
-import java.time.LocalDateTime;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;

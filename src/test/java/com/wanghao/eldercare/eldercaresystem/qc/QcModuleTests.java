@@ -2,10 +2,24 @@ package com.wanghao.eldercare.eldercaresystem.qc;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.wanghao.eldercare.eldercaresystem.rectification.Rectification;
-import com.wanghao.eldercare.eldercaresystem.rectification.RectificationRepository;
-import com.wanghao.eldercare.eldercaresystem.user.User;
-import com.wanghao.eldercare.eldercaresystem.user.UserRepository;
+import com.wanghao.eldercare.eldercaresystem.common.*;
+import com.wanghao.eldercare.eldercaresystem.common.audit.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.perm.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.rbac.*;
+import com.wanghao.eldercare.eldercaresystem.common.security.scope.*;
+import com.wanghao.eldercare.eldercaresystem.common.ws.*;
+import com.wanghao.eldercare.eldercaresystem.controller.qc.*;
+import com.wanghao.eldercare.eldercaresystem.dto.qc.*;
+import com.wanghao.eldercare.eldercaresystem.entity.qc.*;
+import com.wanghao.eldercare.eldercaresystem.entity.rectification.Rectification;
+import com.wanghao.eldercare.eldercaresystem.entity.user.User;
+import com.wanghao.eldercare.eldercaresystem.mapper.qc.*;
+import com.wanghao.eldercare.eldercaresystem.mapper.rectification.RectificationRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.user.UserRepository;
+import com.wanghao.eldercare.eldercaresystem.service.qc.*;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,9 +30,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-
-import java.nio.charset.StandardCharsets;
-import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
