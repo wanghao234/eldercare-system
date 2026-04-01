@@ -100,10 +100,22 @@ class CarePlanModuleTests {
         oldPlan.setUpdatedAt(LocalDateTime.now().minusDays(5));
         oldPlan = carePlanRepository.save(oldPlan);
 
+        CarePlan draftPlan = new CarePlan();
+        draftPlan.setElderId(elder.getUserId());
+        draftPlan.setVersion(2);
+        draftPlan.setStatus("draft");
+        draftPlan.setCareTime("新版护理计划");
+        draftPlan.setCareContent("{\"a\":2}");
+        draftPlan.setStartDate(LocalDate.now());
+        draftPlan.setCreatedBy(nurse.getUserId());
+        draftPlan.setCreatedAt(LocalDateTime.now().minusHours(2));
+        draftPlan.setUpdatedAt(LocalDateTime.now().minusHours(2));
+        draftPlan = carePlanRepository.save(draftPlan);
+
         String nurseToken = loginAndGetToken("nurse1", "123456");
         String leaderToken = loginAndGetToken("leader1", "123456");
 
-        Long changeId = createChange(nurseToken, elder.getUserId());
+        Long changeId = createChange(nurseToken, elder.getUserId(), draftPlan.getCarePlanId(), null, false);
 
         MvcResult approveResult = mockMvc.perform(post("/api/care-plan-changes/{id}/approve", changeId)
                         .header("Authorization", "Bearer " + leaderToken)
@@ -124,6 +136,7 @@ class CarePlanModuleTests {
 
         CarePlan activePlan = carePlanRepository.findByElderIdAndStatus(elder.getUserId(), "active").orElseThrow();
         assertThat(activePlan.getVersion()).isEqualTo(2);
+        assertThat(activePlan.getCarePlanId()).isEqualTo(draftPlan.getCarePlanId());
         assertThat(activePlan.getPlanTitle()).isEqualTo("新版护理计划");
 
         CarePlan oldAfter = carePlanRepository.findById(oldPlan.getCarePlanId()).orElseThrow();
@@ -131,6 +144,81 @@ class CarePlanModuleTests {
 
         List<Task> tasks = taskRepository.findByRelatedBizTypeAndRelatedBizId("care_plan", newPlanId);
         assertThat(tasks).isNotEmpty();
+    }
+
+    @Test
+    void special_change_requires_doctor_second_review_before_activation() throws Exception {
+        User elder = createUser("elderCPSpecial", "elder");
+        User nurse = createUser("nurseSpecial", "nurse");
+        createUser("leaderSpecial", "nurse_leader");
+        createUser("doctorSpecial", "doctor");
+        bindNurse(elder.getUserId(), nurse.getUserId());
+
+        CarePlan oldPlan = new CarePlan();
+        oldPlan.setElderId(elder.getUserId());
+        oldPlan.setVersion(1);
+        oldPlan.setStatus("active");
+        oldPlan.setPlanTitle("普通护理计划");
+        oldPlan.setPlanContentJson("{\"level\":\"normal\"}");
+        oldPlan.setEffectiveDate(LocalDate.now().minusDays(3));
+        oldPlan.setCreatedBy(nurse.getUserId());
+        oldPlan.setCreatedAt(LocalDateTime.now().minusDays(3));
+        oldPlan.setUpdatedAt(LocalDateTime.now().minusDays(3));
+        carePlanRepository.save(oldPlan);
+
+        String nurseToken = loginAndGetToken("nurseSpecial", "123456");
+        String leaderToken = loginAndGetToken("leaderSpecial", "123456");
+        String doctorToken = loginAndGetToken("doctorSpecial", "123456");
+
+        MvcResult createResult = mockMvc.perform(post("/api/care-plan-changes")
+                        .header("Authorization", "Bearer " + nurseToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "elderId":%d,
+                                  "reason":"术后重点观察",
+                                  "changeType":"special",
+                                  "requiresDoctorReview":true,
+                                  "proposedTitle":"术后恢复计划",
+                                  "proposedContent":{
+                                    "careTime":"术后恢复计划",
+                                    "careContent":"重点监测生命体征",
+                                    "startDate":"2026-03-30",
+                                    "dietPlan":"流食过渡"
+                                  }
+                                }
+                                """.formatted(elder.getUserId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andReturn();
+
+        Long changeId = objectMapper.readTree(createResult.getResponse().getContentAsString(StandardCharsets.UTF_8))
+                .path("data").path("id").asLong();
+
+        mockMvc.perform(post("/api/care-plan-changes/{id}/approve", changeId)
+                        .header("Authorization", "Bearer " + leaderToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"comment\":\"护士长初审通过\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.status").value("doctor_review"));
+
+        CarePlan stillActive = carePlanRepository.findByElderIdAndStatus(elder.getUserId(), "active").orElseThrow();
+        assertThat(stillActive.getCareTime()).isEqualTo("普通护理计划");
+
+        mockMvc.perform(post("/api/care-plan-changes/{id}/approve", changeId)
+                        .header("Authorization", "Bearer " + doctorToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"comment\":\"医生复审通过\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.status").value("approved"))
+                .andExpect(jsonPath("$.data.newPlanId").isNumber());
+
+        CarePlan activePlan = carePlanRepository.findByElderIdAndStatus(elder.getUserId(), "active").orElseThrow();
+        assertThat(activePlan.getVersion()).isEqualTo(2);
+        assertThat(activePlan.getCareTime()).isEqualTo("术后恢复计划");
+        assertThat(activePlan.getDietPlan()).isEqualTo("流食过渡");
     }
 
     @Test
@@ -196,7 +284,7 @@ class CarePlanModuleTests {
         String leaderToken = loginAndGetToken("leader3", "123456");
         String nurseToken = loginAndGetToken("nurse3", "123456");
 
-        Long changeId = createChange(leaderToken, elder.getUserId());
+        Long changeId = createChange(leaderToken, elder.getUserId(), null, null, false);
         mockMvc.perform(post("/api/care-plan-changes/{id}/approve", changeId)
                         .header("Authorization", "Bearer " + nurseToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -208,6 +296,7 @@ class CarePlanModuleTests {
     @Test
     void list_care_plans_with_page_params_returns_200() throws Exception {
         User elder = createUser("elderCPList", "elder");
+        createUser("elderCPList2", "elder");
         createUser("adminCPList", "admin");
 
         CarePlan plan = new CarePlan();
@@ -229,35 +318,118 @@ class CarePlanModuleTests {
                         .param("size", "20"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0"))
-                .andExpect(jsonPath("$.data.length()").value(org.hamcrest.Matchers.greaterThanOrEqualTo(1)));
+                .andExpect(jsonPath("$.data.content.length()").value(org.hamcrest.Matchers.greaterThanOrEqualTo(2)))
+                .andExpect(jsonPath("$.data.totalElements").value(org.hamcrest.Matchers.greaterThanOrEqualTo(2)));
     }
 
     @Test
-    void admin_can_create_update_delete_care_plan_directly() throws Exception {
+    void nurse_list_only_shows_bound_elders_with_or_without_plan() throws Exception {
+        User elder1 = createUser("elderListN1", "elder");
+        User elder2 = createUser("elderListN2", "elder");
+        User nurse = createUser("nurseListOnly", "nurse");
+        bindNurse(elder1.getUserId(), nurse.getUserId());
+
+        CarePlan draft = new CarePlan();
+        draft.setElderId(elder1.getUserId());
+        draft.setVersion(1);
+        draft.setStatus("draft");
+        draft.setCareTime("基础护理");
+        draft.setCreatedBy(nurse.getUserId());
+        draft.setCreatedAt(LocalDateTime.now());
+        draft.setUpdatedAt(LocalDateTime.now());
+        carePlanRepository.save(draft);
+
+        String nurseToken = loginAndGetToken("nurseListOnly", "123456");
+        mockMvc.perform(get("/api/care-plans")
+                        .header("Authorization", "Bearer " + nurseToken)
+                        .param("page", "0")
+                        .param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content[0].elderId").value(elder1.getUserId()))
+                .andExpect(jsonPath("$.data.content[0].hasCarePlan").value(true));
+    }
+
+    @Test
+    void doctor_list_only_shows_doctor_review_items() throws Exception {
+        User elder1 = createUser("elderDoctorList1", "elder");
+        User elder2 = createUser("elderDoctorList2", "elder");
+        User nurse = createUser("nurseDoctorList", "nurse");
+        createUser("leaderDoctorList", "nurse_leader");
+        createUser("doctorDoctorList", "doctor");
+        bindNurse(elder1.getUserId(), nurse.getUserId());
+        bindNurse(elder2.getUserId(), nurse.getUserId());
+
+        CarePlan active1 = new CarePlan();
+        active1.setElderId(elder1.getUserId());
+        active1.setVersion(1);
+        active1.setStatus("active");
+        active1.setCareTime("老人1计划");
+        active1.setCreatedBy(nurse.getUserId());
+        active1.setCreatedAt(LocalDateTime.now().minusDays(1));
+        active1.setUpdatedAt(LocalDateTime.now().minusDays(1));
+        carePlanRepository.save(active1);
+
+        CarePlan active2 = new CarePlan();
+        active2.setElderId(elder2.getUserId());
+        active2.setVersion(1);
+        active2.setStatus("active");
+        active2.setCareTime("老人2计划");
+        active2.setCreatedBy(nurse.getUserId());
+        active2.setCreatedAt(LocalDateTime.now().minusDays(1));
+        active2.setUpdatedAt(LocalDateTime.now().minusDays(1));
+        carePlanRepository.save(active2);
+
+        String nurseToken = loginAndGetToken("nurseDoctorList", "123456");
+        String leaderToken = loginAndGetToken("leaderDoctorList", "123456");
+        String doctorToken = loginAndGetToken("doctorDoctorList", "123456");
+
+        Long changeId = createChange(nurseToken, elder1.getUserId(), null, "special", true);
+        mockMvc.perform(post("/api/care-plan-changes/{id}/approve", changeId)
+                        .header("Authorization", "Bearer " + leaderToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"comment\":\"进入医生复审\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("doctor_review"));
+
+        mockMvc.perform(get("/api/care-plans")
+                        .header("Authorization", "Bearer " + doctorToken)
+                        .param("page", "0")
+                        .param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content[0].elderId").value(elder1.getUserId()))
+                .andExpect(jsonPath("$.data.content[0].pendingChangeStatus").value("doctor_review"));
+    }
+
+    @Test
+    void nurse_can_create_update_delete_care_plan_draft() throws Exception {
         User elder = createUser("elderCRUD", "elder");
-        createUser("adminCRUD", "admin");
-        String adminToken = loginAndGetToken("adminCRUD", "123456");
+        User nurse = createUser("nurseCRUD", "nurse");
+        bindNurse(elder.getUserId(), nurse.getUserId());
+        String nurseToken = loginAndGetToken("nurseCRUD", "123456");
 
         MvcResult createResult = mockMvc.perform(post("/api/care-plans")
-                        .header("Authorization", "Bearer " + adminToken)
+                        .header("Authorization", "Bearer " + nurseToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
                                   "elderId": %d,
-                                  "status": "active",
+                                  "status": "draft",
                                   "startDate": "2026-03-01",
                                   "endDate": "2026-03-31",
                                   "careTime": "每天08:00/20:00",
                                   "careContent": "翻身与巡房",
                                   "medicationReminder": "饭后服药",
-                                  "dietPlan": "低盐",
-                                  "approvedBy": 1,
-                                  "approvedAt": "2026-03-01 09:00:00"
+                                  "dietPlan": "低盐"
                                 }
                                 """.formatted(elder.getUserId())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0"))
                 .andExpect(jsonPath("$.data.elderId").value(elder.getUserId()))
+                .andExpect(jsonPath("$.data.status").value("draft"))
                 .andExpect(jsonPath("$.data.endDate").value("2026-03-31"))
                 .andReturn();
 
@@ -265,13 +437,13 @@ class CarePlanModuleTests {
                 .path("data").path("carePlanId").asLong();
 
         mockMvc.perform(put("/api/care-plans/{id}", planId)
-                        .header("Authorization", "Bearer " + adminToken)
+                        .header("Authorization", "Bearer " + nurseToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
                                   "elderId": %d,
                                   "version": 1,
-                                  "status": "inactive",
+                                  "status": "draft",
                                   "startDate": "2026-03-01",
                                   "endDate": "2026-04-01",
                                   "careTime": "每天09:00",
@@ -282,11 +454,11 @@ class CarePlanModuleTests {
                                 """.formatted(elder.getUserId())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0"))
-                .andExpect(jsonPath("$.data.status").value("inactive"))
+                .andExpect(jsonPath("$.data.status").value("draft"))
                 .andExpect(jsonPath("$.data.endDate").value("2026-04-01"));
 
         mockMvc.perform(delete("/api/care-plans/{id}", planId)
-                        .header("Authorization", "Bearer " + adminToken))
+                        .header("Authorization", "Bearer " + nurseToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0"));
 
@@ -330,14 +502,21 @@ class CarePlanModuleTests {
         return root.path("data").path("token").asText();
     }
 
-    private Long createChange(String token, Long elderId) throws Exception {
+    private Long createChange(String token,
+                              Long elderId,
+                              Long draftPlanId,
+                              String changeType,
+                              boolean requiresDoctorReview) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/care-plan-changes")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
                                   "elderId":%d,
+                                  "draftPlanId":%s,
                                   "reason":"调整护理强度",
+                                  "changeType":%s,
+                                  "requiresDoctorReview":%s,
                                   "proposedTitle":"新版护理计划",
                                   "proposedContent":{
                                     "templateKey":"basic_rounding_v1",
@@ -346,7 +525,11 @@ class CarePlanModuleTests {
                                     ]
                                   }
                                 }
-                                """.formatted(elderId)))
+                                """.formatted(
+                                elderId,
+                                draftPlanId == null ? "null" : draftPlanId.toString(),
+                                changeType == null ? "null" : "\"" + changeType + "\"",
+                                requiresDoctorReview)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0"))
                 .andReturn();

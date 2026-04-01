@@ -34,6 +34,7 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/workflows")
 @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
         + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER,"
+        + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_DOCTOR,"
         + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE,"
         + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_CAREGIVER)")
 public class WorkflowController {

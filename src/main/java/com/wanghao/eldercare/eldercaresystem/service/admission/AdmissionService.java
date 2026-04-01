@@ -15,11 +15,13 @@ import com.wanghao.eldercare.eldercaresystem.common.ws.*;
 import com.wanghao.eldercare.eldercaresystem.controller.admission.*;
 import com.wanghao.eldercare.eldercaresystem.dto.admission.*;
 import com.wanghao.eldercare.eldercaresystem.entity.admission.*;
+import com.wanghao.eldercare.eldercaresystem.entity.facility.FacilityBed;
 import com.wanghao.eldercare.eldercaresystem.entity.user.User;
 import com.wanghao.eldercare.eldercaresystem.entity.workflow.WfInstance;
 import com.wanghao.eldercare.eldercaresystem.entity.workflow.WfTask;
 import com.wanghao.eldercare.eldercaresystem.entity.workflow.WfTaskAction;
 import com.wanghao.eldercare.eldercaresystem.mapper.admission.*;
+import com.wanghao.eldercare.eldercaresystem.mapper.facility.FacilityBedRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.user.UserRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.workflow.WfInstanceRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.workflow.WfTaskActionRepository;
@@ -27,8 +29,10 @@ import com.wanghao.eldercare.eldercaresystem.mapper.workflow.WfTaskRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -49,6 +53,7 @@ public class AdmissionService {
     private final AdmissionRecordRepository admissionRecordRepository;
     private final DischargeRecordRepository dischargeRecordRepository;
     private final BedRepository bedRepository;
+    private final FacilityBedRepository facilityBedRepository;
     private final UserRepository userRepository;
     private final PermissionService permissionService;
     private final JdbcTemplate jdbcTemplate;
@@ -59,6 +64,7 @@ public class AdmissionService {
     public AdmissionService(AdmissionRecordRepository admissionRecordRepository,
                             DischargeRecordRepository dischargeRecordRepository,
                             BedRepository bedRepository,
+                            FacilityBedRepository facilityBedRepository,
                             UserRepository userRepository,
                             PermissionService permissionService,
                             JdbcTemplate jdbcTemplate,
@@ -68,6 +74,7 @@ public class AdmissionService {
         this.admissionRecordRepository = admissionRecordRepository;
         this.dischargeRecordRepository = dischargeRecordRepository;
         this.bedRepository = bedRepository;
+        this.facilityBedRepository = facilityBedRepository;
         this.userRepository = userRepository;
         this.permissionService = permissionService;
         this.jdbcTemplate = jdbcTemplate;
@@ -201,7 +208,7 @@ public class AdmissionService {
         }
 
         AdmissionListResponse response = new AdmissionListResponse();
-        response.setContent(pageResult.getContent().stream().map(AdmissionListItemDTO::from).toList());
+        response.setContent(toAdmissionListItems(pageResult.getContent()));
         response.setTotalElements(pageResult.getTotalElements());
         response.setPage(page);
         response.setSize(size);
@@ -212,7 +219,9 @@ public class AdmissionService {
     public AdmissionRecord getAdmissionDetail(CurrentUser currentUser, Long id) {
         AdmissionRecord record = admissionRecordRepository.findById(id)
                 .orElseThrow(() -> new NotFoundException("入住记录不存在"));
-        permissionService.assertCanAccessElder(currentUser, record.getElderId());
+        if (!currentUser.hasRole("doctor")) {
+            permissionService.assertCanAccessElder(currentUser, record.getElderId());
+        }
         return record;
     }
 
@@ -391,7 +400,9 @@ public class AdmissionService {
     @Transactional(readOnly = true)
     public DischargeRecord getDischargeDetail(CurrentUser currentUser, Long id) {
         DischargeRecord record = getDischargeOrThrow(id);
-        permissionService.assertCanAccessElder(currentUser, record.getElderId());
+        if (!currentUser.hasRole("doctor")) {
+            permissionService.assertCanAccessElder(currentUser, record.getElderId());
+        }
         return record;
     }
 
@@ -449,8 +460,12 @@ public class AdmissionService {
 
     private List<Long> applyPermissionFilter(CurrentUser currentUser) {
         if (currentUser.hasRole("admin") || currentUser.hasRole("nurse_leader")
+                || currentUser.hasRole("doctor")
                 || currentUser.hasRole("nurse") || currentUser.hasRole("caregiver")
                 || currentUser.hasRole("family")) {
+            if (currentUser.hasRole("doctor")) {
+                return null;
+            }
             return permissionService.getVisibleElderIds(currentUser);
         }
         throw new AccessDeniedException("当前角色无权限访问");
@@ -512,7 +527,7 @@ public class AdmissionService {
         List<Object> pageArgs = new ArrayList<>(args);
         pageArgs.add(size);
         pageArgs.add(Math.max(page, 0) * size);
-        List<AdmissionListItemDTO> content = jdbcTemplate.query(
+        List<AdmissionRecord> content = jdbcTemplate.query(
                 "select admission_id, elder_id, bed_id, status, start_date, end_date, deposit_amount, "
                         + "created_by, created_at, updated_at "
                         + "from admission_records"
@@ -530,17 +545,58 @@ public class AdmissionService {
                     record.setCreatedBy(rs.getObject("created_by", Long.class));
                     record.setCreatedAt(rs.getObject("created_at", LocalDateTime.class));
                     record.setUpdatedAt(rs.getObject("updated_at", LocalDateTime.class));
-                    return AdmissionListItemDTO.from(record);
+                    return record;
                 },
                 pageArgs.toArray()
         );
 
         AdmissionListResponse response = new AdmissionListResponse();
-        response.setContent(content);
+        response.setContent(toAdmissionListItems(content));
         response.setTotalElements(total);
         response.setPage(page);
         response.setSize(size);
         return response;
+    }
+
+    private List<AdmissionListItemDTO> toAdmissionListItems(List<AdmissionRecord> records) {
+        List<AdmissionListItemDTO> items = records.stream().map(AdmissionListItemDTO::from).toList();
+        if (items.isEmpty()) {
+            return items;
+        }
+
+        Map<Long, User> elderMap = loadElderMap(records);
+        items.forEach(item -> {
+            item.setBedCode(loadBedCode(item.getBedId()));
+            User elder = elderMap.get(item.getElderId());
+            if (elder != null) {
+                item.setElderUsername(trimToNull(elder.getUsername()));
+                item.setElderName(trimToNull(elder.getRealName()));
+            }
+        });
+        return items;
+    }
+
+    private Map<Long, User> loadElderMap(List<AdmissionRecord> records) {
+        List<Long> elderIds = records.stream().map(AdmissionRecord::getElderId).filter(id -> id != null).distinct().toList();
+        Map<Long, User> elderMap = new LinkedHashMap<>();
+        for (User user : userRepository.findAllById(elderIds)) {
+            elderMap.put(user.getUserId(), user);
+        }
+        return elderMap;
+    }
+
+    private String loadBedCode(Long bedId) {
+        if (bedId == null) {
+            return null;
+        }
+        FacilityBed facilityBed = facilityBedRepository.findByBedIdAndDeletedAtIsNull(bedId).orElse(null);
+        if (facilityBed != null && trimToNull(facilityBed.getBedCode()) != null) {
+            return trimToNull(facilityBed.getBedCode());
+        }
+        return bedRepository.findById(bedId)
+                .map(Bed::getBedNo)
+                .map(this::trimToNull)
+                .orElse(null);
     }
 
     private AdmissionListResponse emptyAdmissionPage(int page, int size) {

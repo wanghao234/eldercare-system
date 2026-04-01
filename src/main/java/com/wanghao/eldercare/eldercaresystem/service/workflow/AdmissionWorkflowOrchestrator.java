@@ -21,6 +21,7 @@ import com.wanghao.eldercare.eldercaresystem.dto.careteam.CareTeamAssignmentDTO;
 import com.wanghao.eldercare.eldercaresystem.dto.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.entity.admission.AdmissionRecord;
 import com.wanghao.eldercare.eldercaresystem.entity.admission.Bed;
+import com.wanghao.eldercare.eldercaresystem.entity.profile.ElderProfileEntity;
 import com.wanghao.eldercare.eldercaresystem.entity.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.mapper.admission.AdmissionRecordRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.admission.BedRepository;
@@ -29,6 +30,7 @@ import com.wanghao.eldercare.eldercaresystem.mapper.profile.ElderProfileReposito
 import com.wanghao.eldercare.eldercaresystem.mapper.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.service.careteam.CareTeamAssignmentService;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -86,7 +88,7 @@ public class AdmissionWorkflowOrchestrator {
                               CompleteWfTaskRequest request,
                               WfTask task,
                               WfInstance instance) {
-        ensureCanComplete(currentUser, task);
+        ensureCanComplete(currentUser, task, instance);
         ensureTaskStatus(task);
         ensureAdmissionInstance(instance);
 
@@ -148,7 +150,7 @@ public class AdmissionWorkflowOrchestrator {
                 "health_assess",
                 "健康评估",
                 null,
-                "nurse_leader",
+                "doctor",
                 now.plusHours(HEALTH_ASSESS_DUE_HOURS),
                 actorId,
                 "已绑定护理员数量=" + assignments.size() + "，家属数量=" + familyCount,
@@ -161,21 +163,23 @@ public class AdmissionWorkflowOrchestrator {
                                   JsonNode formData,
                                   Long actorId,
                                   LocalDateTime now) {
-        String careLevelSuggestion = readText(formData, "careLevelSuggestion");
-        if (StringUtils.hasText(careLevelSuggestion)) {
-            elderProfileRepository.findById(admission.getElderId()).ifPresent(profile -> {
-                profile.setCareLevel(careLevelSuggestion.trim());
-                profile.setUpdatedAt(now);
-                elderProfileRepository.save(profile);
-            });
-        }
+        ElderProfileEntity profile = elderProfileRepository.findById(admission.getElderId()).orElseGet(() -> {
+            ElderProfileEntity created = new ElderProfileEntity();
+            created.setElderId(admission.getElderId());
+            created.setCreatedAt(now);
+            created.setUpdatedAt(now);
+            return created;
+        });
+        applyHealthAssessment(profile, formData);
+        profile.setUpdatedAt(now);
+        elderProfileRepository.save(profile);
 
-        Long nurseId = findRequiredNurseId(admission.getElderId());
+        findRequiredNurseId(admission.getElderId());
         return createTask(
                 instance.getInstanceId(),
                 "bed_reserve",
                 "床位确认/预占",
-                nurseId,
+                null,
                 null,
                 now.plusHours(BED_RESERVE_DUE_HOURS),
                 actorId,
@@ -199,9 +203,14 @@ public class AdmissionWorkflowOrchestrator {
             targetBedId = confirmBedId;
         }
 
-        int reserved = bedRepository.reserveIfAvailable(targetBedId);
-        if (reserved == 0) {
-            Bed currentBed = bedRepository.findById(targetBedId).orElseThrow(() -> new NotFoundException("床位不存在"));
+        Bed currentBed = bedRepository.findById(targetBedId).orElseThrow(() -> new NotFoundException("床位不存在"));
+        if ("available".equalsIgnoreCase(currentBed.getStatus())) {
+            int reserved = bedRepository.reserveIfAvailable(targetBedId);
+            if (reserved == 0) {
+                Bed latestBed = bedRepository.findById(targetBedId).orElseThrow(() -> new NotFoundException("床位不存在"));
+                throw badRequest("床位不可预占，当前状态=" + latestBed.getStatus());
+            }
+        } else if (!"reserved".equalsIgnoreCase(currentBed.getStatus())) {
             throw badRequest("床位不可预占，当前状态=" + currentBed.getStatus());
         }
 
@@ -287,8 +296,17 @@ public class AdmissionWorkflowOrchestrator {
         }
     }
 
-    private void ensureCanComplete(CurrentUser currentUser, WfTask task) {
+    private void ensureCanComplete(CurrentUser currentUser, WfTask task, WfInstance instance) {
+        if (isAdmissionCareTeamBedReserveTask(currentUser, task, instance)) {
+            return;
+        }
         if (task.getAssigneeId() != null) {
+            if (isHealthAssessTask(task)
+                    && (currentUser.hasRole("admin")
+                    || currentUser.hasRole("nurse_leader")
+                    || currentUser.hasRole("doctor"))) {
+                return;
+            }
             if (!task.getAssigneeId().equals(currentUser.getUserId())) {
                 throw new AccessDeniedException("仅任务办理人可完成该节点");
             }
@@ -301,8 +319,116 @@ public class AdmissionWorkflowOrchestrator {
         if (currentUser.hasRole("admin")) {
             return;
         }
+        if (isHealthAssessTask(task) && currentUser.hasRole("nurse_leader")) {
+            return;
+        }
         if (!currentUser.hasRole(task.getCandidateRole())) {
             throw new AccessDeniedException("当前角色无权限办理该任务");
+        }
+    }
+
+    private boolean isHealthAssessTask(WfTask task) {
+        return task != null && "health_assess".equalsIgnoreCase(task.getNodeKey());
+    }
+
+    private boolean isAdmissionCareTeamBedReserveTask(CurrentUser currentUser, WfTask task, WfInstance instance) {
+        if (currentUser == null || task == null || instance == null) {
+            return false;
+        }
+        if (!"admission".equalsIgnoreCase(instance.getBizType())
+                || !"bed_reserve".equalsIgnoreCase(task.getNodeKey())) {
+            return false;
+        }
+        if (!(currentUser.hasRole("nurse") || currentUser.hasRole("caregiver"))) {
+            return false;
+        }
+        AdmissionRecord admission = admissionRecordRepository.findById(instance.getBizId()).orElse(null);
+        return admission != null && careTeamAssignmentRepository.existsActiveByElderIdAndNurseId(
+                admission.getElderId(),
+                currentUser.getUserId()
+        );
+    }
+
+    private void applyHealthAssessment(ElderProfileEntity profile, JsonNode formData) {
+        if (formData == null || !formData.isObject()) {
+            return;
+        }
+        String gender = readText(formData, "gender");
+        if (gender != null) {
+            profile.setGender(normalizeGender(gender));
+        }
+
+        LocalDate birthday = readDate(formData, "birthday", "birthDate", "birth_date");
+        if (birthday != null) {
+            profile.setBirthday(birthday);
+        }
+
+        String address = firstNonBlank(
+                readText(formData, "address"),
+                readText(formData, "homeAddress"),
+                readText(formData, "home_address"));
+        if (address != null) {
+            profile.setAddress(address);
+        }
+
+        String emergencyContactName = firstNonBlank(
+                readText(formData, "emergencyContactName"),
+                readText(formData, "emergencyName"),
+                readText(formData, "emergency_name"),
+                readText(formData, "emergency_contact_name"));
+        if (emergencyContactName != null) {
+            profile.setEmergencyContactName(emergencyContactName);
+        }
+
+        String emergencyContactPhone = firstNonBlank(
+                readText(formData, "emergencyContactPhone"),
+                readText(formData, "emergencyPhone"),
+                readText(formData, "emergency_phone"),
+                readText(formData, "emergency_contact_phone"));
+        if (emergencyContactPhone != null) {
+            profile.setEmergencyContactPhone(emergencyContactPhone);
+        }
+
+        String allergies = firstNonBlank(
+                readText(formData, "allergies"),
+                readText(formData, "allergy"),
+                readText(formData, "allergyHistory"),
+                readText(formData, "allergy_history"));
+        if (allergies != null) {
+            profile.setAllergies(allergies);
+        }
+
+        String chronicConditions = firstNonBlank(
+                readText(formData, "chronicConditions"),
+                readText(formData, "chronic"),
+                readText(formData, "chronic_conditions"),
+                readText(formData, "medicalHistory"),
+                readText(formData, "medical_history"));
+        if (chronicConditions != null) {
+            profile.setChronicConditions(chronicConditions);
+        }
+
+        String dietTaboo = firstNonBlank(
+                readText(formData, "dietTaboo"),
+                readText(formData, "dietTaboos"),
+                readText(formData, "diet_taboos"),
+                readText(formData, "diet_taboo"));
+        if (dietTaboo != null) {
+            profile.setDietTaboo(dietTaboo);
+        }
+
+        String careLevel = firstNonBlank(
+                readText(formData, "careLevel"),
+                readText(formData, "careLevelSuggestion"),
+                readText(formData, "care_level"),
+                readText(formData, "level"));
+        if (careLevel != null) {
+            profile.setCareLevel(careLevel);
+        }
+
+        String notes = trimToNull(readText(formData, "notes"));
+        if (notes != null) {
+            profile.setNotes(notes);
         }
     }
 
@@ -484,6 +610,43 @@ public class AdmissionWorkflowOrchestrator {
             return null;
         }
         return formData.get(field).asText(null);
+    }
+
+    private LocalDate readDate(JsonNode formData, String... fields) {
+        for (String field : fields) {
+            String value = readText(formData, field);
+            if (!StringUtils.hasText(value)) {
+                continue;
+            }
+            try {
+                return LocalDate.parse(value.trim());
+            } catch (Exception ex) {
+                throw badRequest(field + " 格式非法，需为 yyyy-MM-dd");
+            }
+        }
+        return null;
+    }
+
+    private String normalizeGender(String value) {
+        String normalized = trimToNull(value);
+        if (normalized == null) {
+            return null;
+        }
+        normalized = normalized.toLowerCase(Locale.ROOT);
+        if (!List.of("male", "female", "unknown").contains(normalized)) {
+            throw badRequest("gender 仅支持 male/female/unknown");
+        }
+        return normalized;
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            String trimmed = trimToNull(value);
+            if (trimmed != null) {
+                return trimmed;
+            }
+        }
+        return null;
     }
 
     private String summarizeFormData(String nodeKey, JsonNode formData) {

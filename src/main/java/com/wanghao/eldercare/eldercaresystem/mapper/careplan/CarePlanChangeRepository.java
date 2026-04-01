@@ -13,6 +13,8 @@ import com.wanghao.eldercare.eldercaresystem.entity.careplan.*;
 import com.wanghao.eldercare.eldercaresystem.service.careplan.*;
 import jakarta.transaction.Transactional;
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
@@ -20,6 +22,20 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface CarePlanChangeRepository extends JpaRepository<CarePlanChangeRequest, Long>, JpaSpecificationExecutor<CarePlanChangeRequest> {
+
+    @Query("""
+            select c from CarePlanChangeRequest c
+            where c.elderId in :elderIds
+            order by c.elderId asc, c.createdAt desc
+            """)
+    List<CarePlanChangeRequest> findByElderIdInOrderByCreatedAtDesc(@Param("elderIds") Collection<Long> elderIds);
+
+    @Query("""
+            select distinct c.elderId from CarePlanChangeRequest c
+            where c.status = :status
+            order by c.elderId asc
+            """)
+    List<Long> findDistinctElderIdsByStatus(@Param("status") String status);
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Transactional

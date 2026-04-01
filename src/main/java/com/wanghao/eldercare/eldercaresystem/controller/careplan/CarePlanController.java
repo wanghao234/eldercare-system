@@ -42,10 +42,12 @@ public class CarePlanController {
     }
 
     @GetMapping("/care-plans")
-    public ApiResponse<List<CarePlanDTO>> listCarePlans(@RequestParam(required = false) Long elderId,
-                                                         @RequestParam(required = false) String status) {
+    public ApiResponse<CarePlanListResponse> listCarePlans(@RequestParam(required = false) Long elderId,
+                                                           @RequestParam(required = false) String status,
+                                                           @RequestParam(defaultValue = "0") int page,
+                                                           @RequestParam(defaultValue = "20") int size) {
         CurrentUser currentUser = currentUserUtils.getCurrentUser();
-        return ApiResponse.ok(carePlanService.listCarePlans(currentUser, elderId, status));
+        return ApiResponse.ok(carePlanService.listCarePlans(currentUser, elderId, status, page, size));
     }
 
     @GetMapping("/care-plans/{id}")
@@ -81,7 +83,7 @@ public class CarePlanController {
 
     @PostMapping("/care-plan-changes")
     @Audited(action = AuditAction.CREATE, entityType = "care_plan_change_requests", responseIdPath = "id",
-            requestFields = {"elderId", "reason", "proposedTitle", "proposedContent"})
+            requestFields = {"elderId", "draftPlanId", "changeType", "requiresDoctorReview", "reason", "proposedTitle", "proposedContent"})
     public ApiResponse<IdResponse> createChange(@Valid @RequestBody CreateCarePlanChangeRequest request) {
         CurrentUser currentUser = currentUserUtils.getCurrentUser();
         return ApiResponse.ok(carePlanService.createChange(currentUser, request));

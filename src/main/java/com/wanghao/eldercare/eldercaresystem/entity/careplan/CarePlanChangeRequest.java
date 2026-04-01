@@ -17,12 +17,14 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDateTime;
 import jakarta.persistence.*;
 
 @Entity
 @Table(name = "care_plan_change_requests")
 public class CarePlanChangeRequest {
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -136,7 +138,25 @@ public class CarePlanChangeRequest {
     }
 
     public String getProposedTitle() {
-        return null;
+        if (proposedJson == null || proposedJson.isBlank()) {
+            return null;
+        }
+        try {
+            var root = JSON.readTree(proposedJson);
+            String value = root.path("proposedTitle").asText(null);
+            if (value == null || value.isBlank()) {
+                value = root.path("planTitle").asText(null);
+            }
+            if (value == null || value.isBlank()) {
+                value = root.path("careTime").asText(null);
+            }
+            if (value == null || value.isBlank()) {
+                value = root.path("title").asText(null);
+            }
+            return value;
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     public void setProposedTitle(String proposedTitle) {

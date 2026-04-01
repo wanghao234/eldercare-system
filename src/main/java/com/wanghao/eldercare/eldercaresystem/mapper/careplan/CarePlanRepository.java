@@ -13,6 +13,8 @@ import com.wanghao.eldercare.eldercaresystem.entity.careplan.*;
 import com.wanghao.eldercare.eldercaresystem.service.careplan.*;
 import jakarta.transaction.Transactional;
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
@@ -28,6 +30,13 @@ public interface CarePlanRepository extends JpaRepository<CarePlan, Long>, JpaSp
 
     @Query("select coalesce(max(c.version),0) from CarePlan c where c.elderId=:elderId")
     Integer findMaxVersionByElderId(@Param("elderId") Long elderId);
+
+    @Query("""
+            select c from CarePlan c
+            where c.elderId in :elderIds
+            order by c.elderId asc, c.version desc, c.updatedAt desc
+            """)
+    List<CarePlan> findByElderIdInOrderByVersionDescUpdatedAtDesc(@Param("elderIds") Collection<Long> elderIds);
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Transactional

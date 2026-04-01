@@ -18,7 +18,10 @@ import java.time.LocalDateTime;
 public class AdmissionListItemDTO {
     private Long admissionId;
     private Long elderId;
+    private String elderUsername;
+    private String elderName;
     private Long bedId;
+    private String bedCode;
     private String contractNo;
     private String packageName;
     private BigDecimal depositAmount;
@@ -60,12 +63,36 @@ public class AdmissionListItemDTO {
         this.elderId = elderId;
     }
 
+    public String getElderUsername() {
+        return elderUsername;
+    }
+
+    public void setElderUsername(String elderUsername) {
+        this.elderUsername = elderUsername;
+    }
+
+    public String getElderName() {
+        return elderName;
+    }
+
+    public void setElderName(String elderName) {
+        this.elderName = elderName;
+    }
+
     public Long getBedId() {
         return bedId;
     }
 
     public void setBedId(Long bedId) {
         this.bedId = bedId;
+    }
+
+    public String getBedCode() {
+        return bedCode;
+    }
+
+    public void setBedCode(String bedCode) {
+        this.bedCode = bedCode;
     }
 
     public String getContractNo() {

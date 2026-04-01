@@ -300,6 +300,24 @@ class ProfileModuleTests {
                 .andExpect(jsonPath("$.data.content[0].buildingName").value("A栋"));
     }
 
+    @Test
+    void doctor_can_list_elder_profiles() throws Exception {
+        createUser("doctorP1", "doctor");
+        User elder = createUser("elderPDoctor", "elder");
+        saveElderProfile(elder.getUserId(), "320101199901011234");
+
+        String doctorToken = loginAndGetToken("doctorP1", "123456");
+
+        mockMvc.perform(get("/api/profiles/elders")
+                        .header("Authorization", "Bearer " + doctorToken)
+                        .param("page", "0")
+                        .param("size", "200"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content[0].elderId").value(elder.getUserId()));
+    }
+
     private User createUser(String username, String role) {
         User user = new User();
         user.setUsername(username);

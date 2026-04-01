@@ -169,7 +169,7 @@ public class ProfileService {
         List<Long> scopeIds = null;
         if (currentUser.hasRole("nurse") || currentUser.hasRole("caregiver")) {
             scopeIds = permissionService.getVisibleElderIds(currentUser);
-        } else if (!(currentUser.hasRole("admin") || currentUser.hasRole("nurse_leader"))) {
+        } else if (!(currentUser.hasRole("admin") || currentUser.hasRole("nurse_leader") || currentUser.hasRole("doctor"))) {
             throw new AccessDeniedException("当前角色无权访问老人档案列表");
         }
 

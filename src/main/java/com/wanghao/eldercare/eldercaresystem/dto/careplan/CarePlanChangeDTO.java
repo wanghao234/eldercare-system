@@ -17,6 +17,7 @@ public class CarePlanChangeDTO {
     private Long changeId;
     private Long elderId;
     private Long currentPlanId;
+    private String changeType;
     private Long requestedBy;
     private String status;
     private String reason;
@@ -36,6 +37,7 @@ public class CarePlanChangeDTO {
         dto.setChangeId(entity.getChangeId());
         dto.setElderId(entity.getElderId());
         dto.setCurrentPlanId(entity.getCurrentPlanId());
+        dto.setChangeType(entity.getChangeType());
         dto.setRequestedBy(entity.getRequestedBy());
         dto.setStatus(entity.getStatus());
         dto.setReason(entity.getReason());
@@ -72,6 +74,14 @@ public class CarePlanChangeDTO {
 
     public void setCurrentPlanId(Long currentPlanId) {
         this.currentPlanId = currentPlanId;
+    }
+
+    public String getChangeType() {
+        return changeType;
+    }
+
+    public void setChangeType(String changeType) {
+        this.changeType = changeType;
     }
 
     public Long getRequestedBy() {

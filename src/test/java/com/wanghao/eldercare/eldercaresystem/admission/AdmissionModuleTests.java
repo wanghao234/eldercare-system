@@ -12,8 +12,12 @@ import com.wanghao.eldercare.eldercaresystem.common.ws.*;
 import com.wanghao.eldercare.eldercaresystem.controller.admission.*;
 import com.wanghao.eldercare.eldercaresystem.dto.admission.*;
 import com.wanghao.eldercare.eldercaresystem.entity.admission.*;
+import com.wanghao.eldercare.eldercaresystem.entity.careteam.CareTeamAssignment;
+import com.wanghao.eldercare.eldercaresystem.entity.facility.FacilityBed;
 import com.wanghao.eldercare.eldercaresystem.entity.user.User;
 import com.wanghao.eldercare.eldercaresystem.mapper.admission.*;
+import com.wanghao.eldercare.eldercaresystem.mapper.careteam.CareTeamAssignmentRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.facility.FacilityBedRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.user.UserRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.workflow.WfInstanceRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.workflow.WfTaskActionRepository;
@@ -63,6 +67,12 @@ class AdmissionModuleTests {
     private DischargeRecordRepository dischargeRecordRepository;
 
     @Autowired
+    private CareTeamAssignmentRepository careTeamAssignmentRepository;
+
+    @Autowired
+    private FacilityBedRepository facilityBedRepository;
+
+    @Autowired
     private WfTaskActionRepository wfTaskActionRepository;
 
     @Autowired
@@ -81,6 +91,8 @@ class AdmissionModuleTests {
         wfTaskActionRepository.deleteAll();
         wfTaskRepository.deleteAll();
         wfInstanceRepository.deleteAll();
+        careTeamAssignmentRepository.deleteAll();
+        facilityBedRepository.deleteAll();
         bedRepository.deleteAll();
         userRepository.deleteAll();
     }
@@ -236,6 +248,7 @@ class AdmissionModuleTests {
         createUser("adminA3", "admin");
         User elder = createUser("elderA3", "elder");
         Bed bed = createBed("available");
+        bindFacilityBedCode(bed.getBedId(), bed.getRoomId(), "A1012");
 
         String adminToken = loginAndGetToken("adminA3", "123456");
 
@@ -263,11 +276,82 @@ class AdmissionModuleTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0"))
                 .andExpect(jsonPath("$.data.content[0].elderId").value(elder.getUserId()))
+                .andExpect(jsonPath("$.data.content[0].elderUsername").value("elderA3"))
+                .andExpect(jsonPath("$.data.content[0].elderName").value("elderA3"))
                 .andExpect(jsonPath("$.data.content[0].bedId").value(bed.getBedId()))
+                .andExpect(jsonPath("$.data.content[0].bedCode").value("A1012"))
                 .andExpect(jsonPath("$.data.content[0].contractNo").value("HT-2026-0002"))
                 .andExpect(jsonPath("$.data.content[0].packageName").value("高护套餐B"))
                 .andExpect(jsonPath("$.data.content[0].processInstanceId").isNumber())
                 .andExpect(jsonPath("$.data.content[0].depositAmount").value(6666.00));
+    }
+
+    @Test
+    void family_can_list_visible_admissions() throws Exception {
+        User family = createUser("familyAdmission", "family");
+        User elder = createUser("elderVisible", "elder");
+        Bed bed = createBed("available");
+        createUser("adminAdmission", "admin");
+        String adminToken = loginAndGetToken("adminAdmission", "123456");
+
+        mockMvc.perform(post("/api/admissions")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "elderId":%d,
+                                  "bedId":%d,
+                                  "startDate":"2030-02-01"
+                                }
+                                """.formatted(elder.getUserId(), bed.getBedId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"));
+
+        admissionRecordRepository.findAll().stream().findFirst().orElseThrow();
+        createCareTeamAssignment(elder.getUserId(), family.getUserId());
+        String familyToken = loginAndGetToken("familyAdmission", "123456");
+
+        mockMvc.perform(get("/api/admissions")
+                        .header("Authorization", "Bearer " + familyToken)
+                        .param("page", "0")
+                        .param("size", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content[0].elderId").value(elder.getUserId()));
+    }
+
+    @Test
+    void doctor_can_list_admissions() throws Exception {
+        createUser("doctorAdmission", "doctor");
+        User elder = createUser("elderDoctorVisible", "elder");
+        Bed bed = createBed("available");
+        createUser("adminDoctorAdmission", "admin");
+        String adminToken = loginAndGetToken("adminDoctorAdmission", "123456");
+
+        mockMvc.perform(post("/api/admissions")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "elderId":%d,
+                                  "bedId":%d,
+                                  "startDate":"2030-02-01"
+                                }
+                                """.formatted(elder.getUserId(), bed.getBedId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"));
+
+        String doctorToken = loginAndGetToken("doctorAdmission", "123456");
+
+        mockMvc.perform(get("/api/admissions")
+                        .header("Authorization", "Bearer " + doctorToken)
+                        .param("page", "0")
+                        .param("size", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content[0].elderId").value(elder.getUserId()));
     }
 
     @Test
@@ -333,6 +417,25 @@ class AdmissionModuleTests {
         bed.setBedNo("B-" + bed.getBedId());
         bed.setStatus(status);
         return bedRepository.save(bed);
+    }
+
+    private void bindFacilityBedCode(Long bedId, Long roomId, String bedCode) {
+        FacilityBed facilityBed = new FacilityBed();
+        facilityBed.setBedId(bedId);
+        facilityBed.setRoomId(roomId);
+        facilityBed.setBedCode(bedCode);
+        facilityBed.setStatus("available");
+        facilityBedRepository.save(facilityBed);
+    }
+
+    private void createCareTeamAssignment(Long elderId, Long familyId) {
+        CareTeamAssignment assignment = new CareTeamAssignment();
+        assignment.setElderId(elderId);
+        assignment.setFamilyId(familyId);
+        assignment.setIsActive(1);
+        assignment.setCreatedAt(LocalDateTime.now());
+        assignment.setUpdatedAt(LocalDateTime.now());
+        careTeamAssignmentRepository.save(assignment);
     }
 
     private String loginAndGetToken(String username, String password) throws Exception {

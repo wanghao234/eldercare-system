@@ -29,8 +29,6 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api")
-@PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
-        + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
 public class AdmissionController {
 
     private final AdmissionService admissionService;
@@ -42,6 +40,8 @@ public class AdmissionController {
     }
 
     @PostMapping("/admissions")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.CREATE, entityType = "admission_records", responseIdPath = "id")
     public ApiResponse<IdResponse> createAdmission(@Valid @RequestBody CreateAdmissionRequest request) {
         CurrentUser currentUser = currentUserUtils.getCurrentUser();
@@ -49,6 +49,12 @@ public class AdmissionController {
     }
 
     @GetMapping("/admissions")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_DOCTOR,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_CAREGIVER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_FAMILY)")
     public ApiResponse<AdmissionListResponse> listAdmissions(@RequestParam(required = false) Long elderId,
                                                              @RequestParam(required = false) String status,
                                                              @RequestParam(defaultValue = "0") int page,
@@ -58,12 +64,20 @@ public class AdmissionController {
     }
 
     @GetMapping("/admissions/{id}")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_DOCTOR,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_CAREGIVER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_FAMILY)")
     public ApiResponse<AdmissionRecord> getAdmission(@PathVariable Long id) {
         CurrentUser currentUser = currentUserUtils.getCurrentUser();
         return ApiResponse.ok(admissionService.getAdmissionDetail(currentUser, id));
     }
 
     @PostMapping("/discharges")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.CREATE, entityType = "discharge_records", responseIdPath = "id")
     public ApiResponse<IdResponse> createDischarge(@Valid @RequestBody DischargeCreateRequest request) {
         CurrentUser currentUser = currentUserUtils.getCurrentUser();
@@ -71,6 +85,12 @@ public class AdmissionController {
     }
 
     @GetMapping("/discharges")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_DOCTOR,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_CAREGIVER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_FAMILY)")
     public ApiResponse<DischargeListResponse> listDischarges(@RequestParam(required = false) Long admissionId,
                                                              @RequestParam(required = false) String status,
                                                              @RequestParam(defaultValue = "0") int page,
@@ -80,12 +100,20 @@ public class AdmissionController {
     }
 
     @GetMapping("/discharges/{id}")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_DOCTOR,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_CAREGIVER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_FAMILY)")
     public ApiResponse<DischargeRecord> getDischarge(@PathVariable Long id) {
         CurrentUser currentUser = currentUserUtils.getCurrentUser();
         return ApiResponse.ok(admissionService.getDischargeDetail(currentUser, id));
     }
 
     @PostMapping("/discharges/{id}/settlement")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.TRANSITION, entityType = "discharge_records", entityIdArg = "id", fromValue = "pending", toValue = "settling")
     public ApiResponse<DischargeRecord> settlement(@PathVariable Long id,
                                                    @Valid @RequestBody SettlementRequest request) {
@@ -94,6 +122,8 @@ public class AdmissionController {
     }
 
     @PostMapping("/discharges/{id}/complete")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.TRANSITION, entityType = "discharge_records", entityIdArg = "id", fromValue = "settling|approved", toValue = "completed")
     public ApiResponse<DischargeRecord> complete(@PathVariable Long id,
                                                  @Valid @RequestBody CompleteDischargeRequest request) {

@@ -20,11 +20,16 @@ import com.wanghao.eldercare.eldercaresystem.common.ws.*;
 import com.wanghao.eldercare.eldercaresystem.controller.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.dto.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.entity.alarm.Alarm;
+import com.wanghao.eldercare.eldercaresystem.entity.admission.AdmissionRecord;
 import com.wanghao.eldercare.eldercaresystem.entity.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.mapper.alarm.AlarmRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.admission.AdmissionRecordRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.careteam.CareTeamAssignmentRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.workflow.*;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -48,6 +53,8 @@ public class WorkflowService {
     private final WfTaskRepository wfTaskRepository;
     private final WfTaskActionRepository wfTaskActionRepository;
     private final AlarmRepository alarmRepository;
+    private final AdmissionRecordRepository admissionRecordRepository;
+    private final CareTeamAssignmentRepository careTeamAssignmentRepository;
     private final PermissionService permissionService;
     private final ObjectMapper objectMapper;
     private final AdmissionWorkflowOrchestrator admissionWorkflowOrchestrator;
@@ -56,6 +63,8 @@ public class WorkflowService {
                            WfTaskRepository wfTaskRepository,
                            WfTaskActionRepository wfTaskActionRepository,
                            AlarmRepository alarmRepository,
+                           AdmissionRecordRepository admissionRecordRepository,
+                           CareTeamAssignmentRepository careTeamAssignmentRepository,
                            PermissionService permissionService,
                            ObjectMapper objectMapper,
                            AdmissionWorkflowOrchestrator admissionWorkflowOrchestrator) {
@@ -63,6 +72,8 @@ public class WorkflowService {
         this.wfTaskRepository = wfTaskRepository;
         this.wfTaskActionRepository = wfTaskActionRepository;
         this.alarmRepository = alarmRepository;
+        this.admissionRecordRepository = admissionRecordRepository;
+        this.careTeamAssignmentRepository = careTeamAssignmentRepository;
         this.permissionService = permissionService;
         this.objectMapper = objectMapper;
         this.admissionWorkflowOrchestrator = admissionWorkflowOrchestrator;
@@ -105,6 +116,16 @@ public class WorkflowService {
         Page<WfTask> taskPage;
         if (isAdminOrLeader(currentUser)) {
             taskPage = wfTaskRepository.findAllByStatusIn(queryStatuses, pageable);
+        } else if (currentUser.hasRole("nurse") || currentUser.hasRole("caregiver")) {
+            List<WfTask> tasks = mergeNurseCareTeamTasks(currentUser, queryStatuses);
+            int fromIndex = Math.min(Math.max(page, 0) * size, tasks.size());
+            int toIndex = Math.min(fromIndex + size, tasks.size());
+            WfTaskListResponse response = new WfTaskListResponse();
+            response.setContent(tasks.subList(fromIndex, toIndex).stream().map(WfTaskDTO::from).toList());
+            response.setTotalElements(tasks.size());
+            response.setPage(page);
+            response.setSize(size);
+            return response;
         } else {
             taskPage = wfTaskRepository.findMyTodo(currentUser.getUserId(), currentUser.getRole(), queryStatuses, pageable);
         }
@@ -299,6 +320,14 @@ public class WorkflowService {
             return;
         }
 
+        if (currentUser.hasRole("doctor") && "admission".equalsIgnoreCase(instance.getBizType())) {
+            return;
+        }
+
+        if (isAdmissionCareTeamBedReserveInstanceAccessible(currentUser, instance)) {
+            return;
+        }
+
         if (wfTaskRepository.existsByInstanceIdAndAssigneeId(instance.getInstanceId(), currentUser.getUserId())
                 || wfTaskRepository.existsByInstanceIdAndCandidateRole(instance.getInstanceId(), currentUser.getRole())) {
             return;
@@ -324,6 +353,17 @@ public class WorkflowService {
             return;
         }
 
+        WfInstance instance = wfInstanceRepository.findById(task.getInstanceId()).orElse(null);
+
+        if (isAdmissionHealthAssessTask(instance, task)
+                && (currentUser.hasRole("doctor") || currentUser.hasRole("nurse_leader"))) {
+            return;
+        }
+
+        if (isAdmissionCareTeamBedReserveTask(currentUser, instance, task)) {
+            return;
+        }
+
         if (task.getAssigneeId() != null && task.getAssigneeId().equals(currentUser.getUserId())) {
             return;
         }
@@ -333,7 +373,6 @@ public class WorkflowService {
             return;
         }
 
-        WfInstance instance = wfInstanceRepository.findById(task.getInstanceId()).orElse(null);
         if (instance != null && "alarm".equalsIgnoreCase(instance.getBizType())) {
             Alarm alarm = alarmRepository.findById(instance.getBizId()).orElse(null);
             if (alarm != null) {
@@ -343,6 +382,63 @@ public class WorkflowService {
         }
 
         throw new AccessDeniedException("无权限操作该流程任务");
+    }
+
+    private boolean isAdmissionHealthAssessTask(WfInstance instance, WfTask task) {
+        return instance != null
+                && "admission".equalsIgnoreCase(instance.getBizType())
+                && task != null
+                && "health_assess".equalsIgnoreCase(task.getNodeKey());
+    }
+
+    private boolean isAdmissionCareTeamBedReserveTask(CurrentUser currentUser, WfInstance instance, WfTask task) {
+        return currentUser != null
+                && instance != null
+                && task != null
+                && "admission".equalsIgnoreCase(instance.getBizType())
+                && "bed_reserve".equalsIgnoreCase(task.getNodeKey())
+                && isAdmissionCareTeamMember(currentUser, instance.getBizId());
+    }
+
+    private boolean isAdmissionCareTeamBedReserveInstanceAccessible(CurrentUser currentUser, WfInstance instance) {
+        return currentUser != null
+                && instance != null
+                && "admission".equalsIgnoreCase(instance.getBizType())
+                && isAdmissionCareTeamMember(currentUser, instance.getBizId());
+    }
+
+    private boolean isAdmissionCareTeamMember(CurrentUser currentUser, Long admissionId) {
+        if (currentUser == null || admissionId == null) {
+            return false;
+        }
+        if (!(currentUser.hasRole("nurse") || currentUser.hasRole("caregiver"))) {
+            return false;
+        }
+        AdmissionRecord admission = admissionRecordRepository.findById(admissionId).orElse(null);
+        return admission != null && careTeamAssignmentRepository.existsActiveByElderIdAndNurseId(
+                admission.getElderId(),
+                currentUser.getUserId()
+        );
+    }
+
+    private List<WfTask> mergeNurseCareTeamTasks(CurrentUser currentUser, Set<String> queryStatuses) {
+        List<WfTask> directTasks = wfTaskRepository.findMyTodo(
+                currentUser.getUserId(),
+                currentUser.getRole(),
+                queryStatuses,
+                PageRequest.of(0, 1000, Sort.by(Sort.Direction.DESC, "createdAt"))
+        ).getContent();
+        List<WfTask> teamTasks = wfTaskRepository.findAdmissionBedReserveTodoForCareTeam(currentUser.getUserId(), queryStatuses);
+        Map<Long, WfTask> merged = new LinkedHashMap<>();
+        for (WfTask task : directTasks) {
+            merged.put(task.getWfTaskId(), task);
+        }
+        for (WfTask task : teamTasks) {
+            merged.put(task.getWfTaskId(), task);
+        }
+        List<WfTask> tasks = new ArrayList<>(merged.values());
+        tasks.sort(Comparator.comparing(WfTask::getCreatedAt, Comparator.nullsLast(LocalDateTime::compareTo)).reversed());
+        return tasks;
     }
 
     private void saveAction(Long wfTaskId,

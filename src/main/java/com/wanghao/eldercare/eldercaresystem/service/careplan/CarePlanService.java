@@ -19,10 +19,14 @@ import com.wanghao.eldercare.eldercaresystem.common.ws.*;
 import com.wanghao.eldercare.eldercaresystem.controller.careplan.*;
 import com.wanghao.eldercare.eldercaresystem.dto.careplan.*;
 import com.wanghao.eldercare.eldercaresystem.entity.careplan.*;
+import com.wanghao.eldercare.eldercaresystem.entity.user.User;
 import com.wanghao.eldercare.eldercaresystem.mapper.careplan.*;
+import com.wanghao.eldercare.eldercaresystem.mapper.user.UserRepository;
 import com.wanghao.eldercare.eldercaresystem.service.audit.AuditService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -47,47 +51,78 @@ public class CarePlanService {
     private final PermissionService permissionService;
     private final ObjectMapper objectMapper;
     private final AuditService auditService;
+    private final UserRepository userRepository;
 
     public CarePlanService(CarePlanRepository carePlanRepository,
                            CarePlanChangeRepository carePlanChangeRepository,
                            CarePlanTaskGenerator carePlanTaskGenerator,
                            PermissionService permissionService,
                            ObjectMapper objectMapper,
-                           AuditService auditService) {
+                           AuditService auditService,
+                           UserRepository userRepository) {
         this.carePlanRepository = carePlanRepository;
         this.carePlanChangeRepository = carePlanChangeRepository;
         this.carePlanTaskGenerator = carePlanTaskGenerator;
         this.permissionService = permissionService;
         this.objectMapper = objectMapper;
         this.auditService = auditService;
+        this.userRepository = userRepository;
     }
 
     @Transactional(readOnly = true)
-    public List<CarePlanDTO> listCarePlans(CurrentUser currentUser, Long elderId, String status) {
+    public CarePlanListResponse listCarePlans(CurrentUser currentUser,
+                                              Long elderId,
+                                              String status,
+                                              int page,
+                                              int size) {
         if (!canRead(currentUser)) {
             throw new AccessDeniedException("当前角色无权限查看护理计划");
         }
 
-        Specification<CarePlan> spec = Specification.where(null);
-        if (elderId != null) {
-            spec = spec.and((root, query, cb) -> cb.equal(root.get("elderId"), elderId));
-        }
-        if (status != null && !status.isBlank()) {
-            spec = spec.and((root, query, cb) -> cb.equal(root.get("status"), status.toLowerCase(Locale.ROOT)));
+        Page<User> elderPage = searchVisibleElders(currentUser, elderId, page, size);
+        List<User> elders = elderPage.getContent();
+        List<Long> elderIds = elders.stream().map(User::getUserId).toList();
+
+        Map<Long, CarePlan> latestPlanMap = loadLatestPlanMap(elderIds, status);
+        Map<Long, CarePlanChangeRequest> latestChangeMap = loadLatestChangeMap(elderIds, currentUser);
+
+        List<CarePlanListItemDTO> items = new ArrayList<>();
+        for (User elder : elders) {
+            CarePlan plan = latestPlanMap.get(elder.getUserId());
+            CarePlanChangeRequest change = latestChangeMap.get(elder.getUserId());
+            if (currentUser.hasRole("doctor") && change == null) {
+                continue;
+            }
+            CarePlanListItemDTO item = new CarePlanListItemDTO();
+            item.setElderId(elder.getUserId());
+            item.setElderUsername(trimToNull(elder.getUsername()));
+            item.setElderName(trimToNull(elder.getRealName()));
+            item.setElderStatus(trimToNull(elder.getStatus()));
+            if (plan != null) {
+                item.setHasCarePlan(true);
+                item.setCarePlanId(plan.getCarePlanId());
+                item.setCarePlanVersion(plan.getVersion());
+                item.setCarePlanStatus(plan.getStatus());
+                item.setCareTime(trimToNull(plan.getCareTime()));
+                item.setStartDate(plan.getStartDate());
+                item.setEndDate(plan.getEndDate());
+                item.setPlanUpdatedAt(plan.getUpdatedAt());
+            }
+            if (change != null) {
+                item.setPendingChangeId(change.getChangeId());
+                item.setPendingChangeStatus(change.getStatus());
+                item.setPendingChangeType(change.getChangeType());
+                item.setRequiresDoctorReview(requiresDoctorReview(change));
+            }
+            items.add(item);
         }
 
-        List<Long> visibleElderIds = permissionService.getVisibleElderIds(currentUser);
-        if (visibleElderIds != null && visibleElderIds.isEmpty()) {
-            return List.of();
-        }
-        if (visibleElderIds != null) {
-            spec = spec.and((root, query, cb) -> root.get("elderId").in(visibleElderIds));
-        }
-
-        return carePlanRepository.findAll(spec, Sort.by(Sort.Direction.DESC, "version"))
-                .stream()
-                .map(CarePlanDTO::from)
-                .toList();
+        CarePlanListResponse response = new CarePlanListResponse();
+        response.setContent(items);
+        response.setTotalElements(currentUser.hasRole("doctor") ? items.size() : elderPage.getTotalElements());
+        response.setPage(page);
+        response.setSize(size);
+        return response;
     }
 
     @Transactional(readOnly = true)
@@ -97,15 +132,18 @@ public class CarePlanService {
         }
         CarePlan plan = carePlanRepository.findById(carePlanId)
                 .orElseThrow(() -> new NotFoundException("护理计划不存在"));
-        permissionService.assertCanAccessElder(currentUser, plan.getElderId());
+        if (!currentUser.hasRole("doctor")) {
+            permissionService.assertCanAccessElder(currentUser, plan.getElderId());
+        }
         return CarePlanDTO.from(plan);
     }
 
     @Transactional
     public CarePlanDTO createCarePlan(CurrentUser currentUser, UpsertCarePlanRequest request) {
-        requireCarePlanManager(currentUser);
+        requireCarePlanDraftManager(currentUser);
+        permissionService.assertCanAccessElder(currentUser, request.getElderId());
         Integer version = resolveCreateVersion(request.getElderId(), request.getVersion());
-        String status = normalizeStatus(request.getStatus());
+        String status = normalizeDraftStatus(request.getStatus());
         validateDateRange(resolveStartDate(request), request.getEndDate());
 
         CarePlan plan = new CarePlan();
@@ -116,18 +154,16 @@ public class CarePlanService {
         plan.setCreatedBy(currentUser.getUserId());
         plan.setCreatedAt(LocalDateTime.now());
         plan.setUpdatedAt(LocalDateTime.now());
-        if (request.getApprovedBy() != null || request.getApprovedAt() != null) {
-            plan.setApprovedBy(request.getApprovedBy());
-            plan.setApprovedAt(request.getApprovedAt() == null ? LocalDateTime.now() : request.getApprovedAt());
-        }
         return CarePlanDTO.from(carePlanRepository.save(plan));
     }
 
     @Transactional
     public CarePlanDTO updateCarePlan(CurrentUser currentUser, Long carePlanId, UpsertCarePlanRequest request) {
-        requireCarePlanManager(currentUser);
+        requireCarePlanDraftManager(currentUser);
         CarePlan plan = carePlanRepository.findById(carePlanId)
                 .orElseThrow(() -> new NotFoundException("护理计划不存在"));
+        permissionService.assertCanAccessElder(currentUser, plan.getElderId());
+        ensureDraftEditable(plan);
 
         Integer targetVersion = request.getVersion() == null ? plan.getVersion() : request.getVersion();
         if (targetVersion == null || targetVersion <= 0) {
@@ -136,48 +172,56 @@ public class CarePlanService {
         if (carePlanRepository.existsByElderIdAndVersionAndCarePlanIdNot(request.getElderId(), targetVersion, carePlanId)) {
             throw badRequest("同一老人下 version 已存在");
         }
-        String status = normalizeStatus(request.getStatus());
+        permissionService.assertCanAccessElder(currentUser, request.getElderId());
+        String status = normalizeDraftStatus(request.getStatus());
         validateDateRange(resolveStartDate(request), request.getEndDate());
 
         plan.setElderId(request.getElderId());
         plan.setVersion(targetVersion);
         plan.setStatus(status);
         applyUpsertFields(plan, request);
-        if (request.getApprovedBy() != null || request.getApprovedAt() != null) {
-            plan.setApprovedBy(request.getApprovedBy());
-            plan.setApprovedAt(request.getApprovedAt() == null ? LocalDateTime.now() : request.getApprovedAt());
-        }
         plan.setUpdatedAt(LocalDateTime.now());
         return CarePlanDTO.from(carePlanRepository.save(plan));
     }
 
     @Transactional
     public void deleteCarePlan(CurrentUser currentUser, Long carePlanId) {
-        requireCarePlanManager(currentUser);
+        requireCarePlanDraftManager(currentUser);
         CarePlan plan = carePlanRepository.findById(carePlanId)
                 .orElseThrow(() -> new NotFoundException("护理计划不存在"));
+        permissionService.assertCanAccessElder(currentUser, plan.getElderId());
         carePlanRepository.delete(plan);
     }
 
     @Transactional
     public IdResponse createChange(CurrentUser currentUser, CreateCarePlanChangeRequest request) {
-        if (!(currentUser.hasRole("nurse") || currentUser.hasRole("caregiver")
-                || currentUser.hasRole("nurse_leader") || currentUser.hasRole("admin"))) {
-            throw new AccessDeniedException("当前角色无权限发起护理计划变更");
-        }
+        requireCarePlanChangeInitiator(currentUser);
 
-        permissionService.assertCanAccessElder(currentUser, request.getElderId());
+        CarePlan draftPlan = null;
+        if (request.getDraftPlanId() != null) {
+            draftPlan = carePlanRepository.findById(request.getDraftPlanId())
+                    .orElseThrow(() -> new NotFoundException("护理计划草稿不存在"));
+            ensureDraftEditable(draftPlan);
+            if (!draftPlan.getElderId().equals(request.getElderId())) {
+                throw badRequest("draftPlanId 与 elderId 不匹配");
+            }
+            permissionService.assertCanAccessElder(currentUser, draftPlan.getElderId());
+        } else {
+            permissionService.assertCanAccessElder(currentUser, request.getElderId());
+        }
 
         CarePlanChangeRequest entity = new CarePlanChangeRequest();
         entity.setElderId(request.getElderId());
         entity.setFromCarePlanId(carePlanRepository.findByElderIdAndStatus(request.getElderId(), "active")
                 .map(CarePlan::getCarePlanId)
                 .orElse(null));
-        entity.setChangeType("other");
+        String changeType = normalizeChangeType(request.getChangeType(), request.getRequiresDoctorReview());
+        entity.setChangeType(changeType);
         entity.setRequestedBy(currentUser.getUserId());
         entity.setStatus("pending");
         entity.setReason(request.getReason());
-        entity.setProposedJson(buildProposedJson(request.getProposedTitle(), request.getProposedContent()));
+        entity.setProposedJson(buildProposedJson(request, draftPlan));
+        entity.setEvidenceJson(buildEvidenceJson(request.getDraftPlanId(), changeType, requiresDoctorReview(changeType, request.getRequiresDoctorReview())));
         entity.setRequestedAt(LocalDateTime.now());
         entity.setCreatedAt(LocalDateTime.now());
         entity.setUpdatedAt(LocalDateTime.now());
@@ -204,12 +248,14 @@ public class CarePlanService {
             spec = spec.and((root, query, cb) -> cb.equal(root.get("status"), status.toLowerCase(Locale.ROOT)));
         }
 
-        List<Long> visibleElderIds = permissionService.getVisibleElderIds(currentUser);
-        if (visibleElderIds != null && visibleElderIds.isEmpty()) {
-            return emptyPage(page, size);
-        }
-        if (visibleElderIds != null) {
-            spec = spec.and((root, query, cb) -> root.get("elderId").in(visibleElderIds));
+        if (!currentUser.hasRole("doctor")) {
+            List<Long> visibleElderIds = permissionService.getVisibleElderIds(currentUser);
+            if (visibleElderIds != null && visibleElderIds.isEmpty()) {
+                return emptyPage(page, size);
+            }
+            if (visibleElderIds != null) {
+                spec = spec.and((root, query, cb) -> root.get("elderId").in(visibleElderIds));
+            }
         }
 
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
@@ -230,85 +276,63 @@ public class CarePlanService {
         }
 
         CarePlanChangeRequest entity = getChangeOrThrow(id);
-        permissionService.assertCanAccessElder(currentUser, entity.getElderId());
+        if (!currentUser.hasRole("doctor")) {
+            permissionService.assertCanAccessElder(currentUser, entity.getElderId());
+        }
         return CarePlanChangeDTO.from(entity);
     }
 
     @Transactional
     public CarePlanChangeDTO approve(CurrentUser currentUser, Long id, ReviewCarePlanChangeRequest request) {
-        if (!(currentUser.hasRole("admin") || currentUser.hasRole("nurse_leader"))) {
-            throw new AccessDeniedException("仅管理员/护士长可审批");
-        }
-
         CarePlanChangeRequest change = getChangeOrThrow(id);
-        permissionService.assertCanAccessElder(currentUser, change.getElderId());
-
+        if (!(currentUser.hasRole("admin") || currentUser.hasRole("doctor"))) {
+            permissionService.assertCanAccessElder(currentUser, change.getElderId());
+        }
         LocalDateTime now = LocalDateTime.now();
         String reviewComment = request == null ? null : request.getComment();
-        int updated = carePlanChangeRepository.approveIfPending(id, currentUser.getUserId(), now, reviewComment, now);
-        if (updated == 0) {
-            throw badRequest("状态不匹配，仅允许 pending -> approved");
+
+        if ("pending".equalsIgnoreCase(change.getStatus())) {
+            requireLeaderReviewer(currentUser);
+            if (requiresDoctorReview(change)) {
+                change.setStatus("doctor_review");
+                change.setReviewedBy(currentUser.getUserId());
+                change.setReviewedAt(now);
+                change.setReviewComment(reviewComment);
+                change.setUpdatedAt(now);
+                return CarePlanChangeDTO.from(carePlanChangeRepository.save(change));
+            }
+            return finalizeApprovedChange(change, currentUser.getUserId(), reviewComment, now);
         }
-
-        Integer maxVersion = carePlanRepository.findMaxVersionByElderId(change.getElderId());
-        int nextVersion = (maxVersion == null ? 0 : maxVersion) + 1;
-
-        CarePlan activeBefore = carePlanRepository.findByElderIdAndStatus(change.getElderId(), "active").orElse(null);
-        int deactivated = carePlanRepository.deactivateActiveByElderId(change.getElderId(), now);
-
-        CarePlan newPlan = new CarePlan();
-        newPlan.setElderId(change.getElderId());
-        newPlan.setVersion(nextVersion);
-        newPlan.setStatus("active");
-        String proposedJson = change.getProposedJson();
-        newPlan.setPlanTitle(resolveProposedTitle(proposedJson));
-        newPlan.setPlanContentJson(proposedJson);
-        newPlan.setEffectiveDate(resolveEffectiveDate(proposedJson, LocalDate.now()));
-        newPlan.setCreatedBy(currentUser.getUserId());
-        newPlan.setCreatedAt(now);
-        newPlan.setUpdatedAt(now);
-        CarePlan savedPlan = carePlanRepository.save(newPlan);
-
-        TaskRegenerationResult taskResult = carePlanTaskGenerator.regenerate(
-                savedPlan,
-                currentUser.getUserId(),
-                7,
-                activeBefore == null ? null : activeBefore.getCarePlanId()
-        );
-        auditService.logSuccess(AuditAction.CREATE, "care_plans", savedPlan.getCarePlanId(),
-                Map.of("elderId", savedPlan.getElderId(), "version", savedPlan.getVersion(), "status", savedPlan.getStatus()));
-        if (deactivated > 0 && activeBefore != null) {
-            auditService.logTransition("care_plans", activeBefore.getCarePlanId(),
-                    "active", "inactive", AuditAction.TRANSITION,
-                    Map.of("elderId", change.getElderId(), "newPlanId", savedPlan.getCarePlanId()));
+        if ("doctor_review".equalsIgnoreCase(change.getStatus())) {
+            requireDoctorReviewer(currentUser);
+            return finalizeApprovedChange(change, currentUser.getUserId(), reviewComment, now);
         }
-        auditService.logSuccess(AuditAction.CREATE, "tasks", savedPlan.getCarePlanId(),
-                Map.of("carePlanId", savedPlan.getCarePlanId(), "generatedTaskCount", taskResult.getGeneratedCount(),
-                        "deletedTaskCount", taskResult.getDeletedCount()));
-
-        CarePlanChangeDTO dto = CarePlanChangeDTO.from(getChangeOrThrow(id));
-        dto.setNewPlanId(savedPlan.getCarePlanId());
-        dto.setGeneratedTaskCount(taskResult.getGeneratedCount());
-        return dto;
+        throw badRequest("状态不匹配，仅允许 pending/doctor_review -> approved");
     }
 
     @Transactional
     public CarePlanChangeDTO reject(CurrentUser currentUser, Long id, ReviewCarePlanChangeRequest request) {
-        if (!(currentUser.hasRole("admin") || currentUser.hasRole("nurse_leader"))) {
-            throw new AccessDeniedException("仅管理员/护士长可审批");
-        }
-
         CarePlanChangeRequest change = getChangeOrThrow(id);
-        permissionService.assertCanAccessElder(currentUser, change.getElderId());
+        if (!(currentUser.hasRole("admin") || currentUser.hasRole("doctor"))) {
+            permissionService.assertCanAccessElder(currentUser, change.getElderId());
+        }
 
         String rejectReason = request == null ? null : request.getComment();
         LocalDateTime now = LocalDateTime.now();
-        int updated = carePlanChangeRepository.rejectIfPending(id, currentUser.getUserId(), now, rejectReason, now);
-        if (updated == 0) {
-            throw badRequest("状态不匹配，仅允许 pending -> rejected");
+        if ("pending".equalsIgnoreCase(change.getStatus())) {
+            requireLeaderReviewer(currentUser);
+        } else if ("doctor_review".equalsIgnoreCase(change.getStatus())) {
+            requireDoctorReviewer(currentUser);
+        } else {
+            throw badRequest("状态不匹配，仅允许 pending/doctor_review -> rejected");
         }
 
-        return CarePlanChangeDTO.from(getChangeOrThrow(id));
+        change.setStatus("rejected");
+        change.setReviewedBy(currentUser.getUserId());
+        change.setReviewedAt(now);
+        change.setReviewComment(rejectReason);
+        change.setUpdatedAt(now);
+        return CarePlanChangeDTO.from(carePlanChangeRepository.save(change));
     }
 
     @Transactional
@@ -345,49 +369,318 @@ public class CarePlanService {
         }
     }
 
-    private String buildProposedJson(String proposedTitle, JsonNode proposedContent) {
-        try {
-            JsonNode content = proposedContent == null ? objectMapper.createObjectNode() : proposedContent.deepCopy();
-            if (!content.isObject()) {
-                return toJson(content);
+    private String buildProposedJson(CreateCarePlanChangeRequest request, CarePlan draftPlan) {
+        com.fasterxml.jackson.databind.node.ObjectNode root = objectMapper.createObjectNode();
+        if (draftPlan != null) {
+            root.put("carePlanId", draftPlan.getCarePlanId());
+            root.put("elderId", draftPlan.getElderId());
+            root.put("version", draftPlan.getVersion());
+            putText(root, "planTitle", draftPlan.getPlanTitle());
+            putText(root, "careTime", draftPlan.getCareTime());
+            putText(root, "careContent", draftPlan.getCareContent());
+            putText(root, "medicationReminder", draftPlan.getMedicationReminder());
+            putText(root, "dietPlan", draftPlan.getDietPlan());
+            putDate(root, "startDate", draftPlan.getStartDate());
+            putDate(root, "endDate", draftPlan.getEndDate());
+            putDate(root, "effectiveDate", draftPlan.getEffectiveDate());
+        }
+        putText(root, "proposedTitle", request.getProposedTitle());
+        if (request.getProposedTitle() != null && (root.path("planTitle").isMissingNode() || root.path("planTitle").asText().isBlank())) {
+            root.put("planTitle", request.getProposedTitle());
+            root.put("careTime", request.getProposedTitle());
+        }
+
+        JsonNode proposedContent = request.getProposedContent();
+        if (proposedContent != null && !proposedContent.isNull()) {
+            root.set("proposedContent", proposedContent.deepCopy());
+            if (proposedContent.isTextual()) {
+                root.put("careContent", proposedContent.asText());
+            } else {
+                root.put("careContent", proposedContent.toString());
             }
-            ((com.fasterxml.jackson.databind.node.ObjectNode) content).put("proposedTitle", proposedTitle);
-            return toJson(content);
-        } catch (Exception e) {
-            return toJson(proposedContent);
+            if (proposedContent.isObject()) {
+                copyText(proposedContent, root, "planTitle", "careTime", "careContent", "medicationReminder", "dietPlan", "title");
+                copyDate(proposedContent, root, "startDate", "endDate", "effectiveDate");
+            }
+        }
+        return toJson(root);
+    }
+
+    private String buildEvidenceJson(Long draftPlanId, String changeType, boolean requiresDoctorReview) {
+        com.fasterxml.jackson.databind.node.ObjectNode root = objectMapper.createObjectNode();
+        if (draftPlanId != null) {
+            root.put("draftPlanId", draftPlanId);
+        }
+        root.put("changeType", changeType);
+        root.put("requiresDoctorReview", requiresDoctorReview);
+        return toJson(root);
+    }
+
+    private String normalizeChangeType(String changeType, Boolean requiresDoctorReview) {
+        String normalized = changeType == null || changeType.isBlank() ? "routine" : changeType.trim().toLowerCase(Locale.ROOT);
+        if (!Set.of("routine", "special", "initial").contains(normalized)) {
+            throw badRequest("changeType 仅支持 routine/special/initial");
+        }
+        if (Boolean.TRUE.equals(requiresDoctorReview) && "routine".equals(normalized)) {
+            return "special";
+        }
+        return normalized;
+    }
+
+    private boolean requiresDoctorReview(String changeType, Boolean requestedFlag) {
+        return Boolean.TRUE.equals(requestedFlag) || "special".equalsIgnoreCase(changeType);
+    }
+
+    private boolean requiresDoctorReview(CarePlanChangeRequest change) {
+        if ("special".equalsIgnoreCase(change.getChangeType())) {
+            return true;
+        }
+        JsonNode evidence = parseJson(change.getEvidenceJson());
+        return evidence != null && evidence.path("requiresDoctorReview").asBoolean(false);
+    }
+
+    private Long resolveDraftPlanId(CarePlanChangeRequest change) {
+        JsonNode evidence = parseJson(change.getEvidenceJson());
+        if (evidence == null || evidence.path("draftPlanId").isMissingNode() || evidence.path("draftPlanId").isNull()) {
+            return null;
+        }
+        return evidence.path("draftPlanId").asLong();
+    }
+
+    private CarePlanChangeDTO finalizeApprovedChange(CarePlanChangeRequest change,
+                                                     Long reviewerId,
+                                                     String reviewComment,
+                                                     LocalDateTime now) {
+        CarePlan activeBefore = carePlanRepository.findByElderIdAndStatus(change.getElderId(), "active").orElse(null);
+        int deactivated = carePlanRepository.deactivateActiveByElderId(change.getElderId(), now);
+        Long draftPlanId = resolveDraftPlanId(change);
+        CarePlan savedPlan;
+        if (draftPlanId != null) {
+            CarePlan draftPlan = carePlanRepository.findById(draftPlanId)
+                    .orElseThrow(() -> new NotFoundException("护理计划草稿不存在"));
+            ensureDraftEditable(draftPlan);
+            savedPlan = activateDraftPlan(draftPlan, change, reviewerId, now);
+        } else {
+            savedPlan = createApprovedPlan(change, reviewerId, now);
+        }
+
+        change.setStatus("approved");
+        change.setReviewedBy(reviewerId);
+        change.setReviewedAt(now);
+        change.setReviewComment(reviewComment);
+        change.setUpdatedAt(now);
+        carePlanChangeRepository.save(change);
+
+        TaskRegenerationResult taskResult = carePlanTaskGenerator.regenerate(
+                savedPlan,
+                reviewerId,
+                7,
+                activeBefore == null ? null : activeBefore.getCarePlanId()
+        );
+        auditService.logSuccess(AuditAction.CREATE, "care_plans", savedPlan.getCarePlanId(),
+                Map.of("elderId", savedPlan.getElderId(), "version", savedPlan.getVersion(), "status", savedPlan.getStatus()));
+        if (deactivated > 0 && activeBefore != null) {
+            auditService.logTransition("care_plans", activeBefore.getCarePlanId(),
+                    "active", "inactive", AuditAction.TRANSITION,
+                    Map.of("elderId", change.getElderId(), "newPlanId", savedPlan.getCarePlanId()));
+        }
+        auditService.logSuccess(AuditAction.CREATE, "tasks", savedPlan.getCarePlanId(),
+                Map.of("carePlanId", savedPlan.getCarePlanId(), "generatedTaskCount", taskResult.getGeneratedCount(),
+                        "deletedTaskCount", taskResult.getDeletedCount()));
+
+        CarePlanChangeDTO dto = CarePlanChangeDTO.from(change);
+        dto.setNewPlanId(savedPlan.getCarePlanId());
+        dto.setGeneratedTaskCount(taskResult.getGeneratedCount());
+        return dto;
+    }
+
+    private CarePlan activateDraftPlan(CarePlan draftPlan,
+                                       CarePlanChangeRequest change,
+                                       Long reviewerId,
+                                       LocalDateTime now) {
+        applyProposedPlanFields(draftPlan, change.getProposedJson());
+        draftPlan.setStatus("active");
+        draftPlan.setApprovedBy(reviewerId);
+        draftPlan.setApprovedAt(now);
+        draftPlan.setUpdatedAt(now);
+        return carePlanRepository.save(draftPlan);
+    }
+
+    private CarePlan createApprovedPlan(CarePlanChangeRequest change,
+                                        Long reviewerId,
+                                        LocalDateTime now) {
+        Integer maxVersion = carePlanRepository.findMaxVersionByElderId(change.getElderId());
+        int nextVersion = (maxVersion == null ? 0 : maxVersion) + 1;
+        CarePlan newPlan = new CarePlan();
+        newPlan.setElderId(change.getElderId());
+        newPlan.setVersion(nextVersion);
+        newPlan.setStatus("active");
+        newPlan.setCreatedBy(change.getRequestedBy());
+        newPlan.setCreatedAt(now);
+        newPlan.setApprovedBy(reviewerId);
+        newPlan.setApprovedAt(now);
+        applyProposedPlanFields(newPlan, change.getProposedJson());
+        newPlan.setUpdatedAt(now);
+        return carePlanRepository.save(newPlan);
+    }
+
+    private void applyProposedPlanFields(CarePlan plan, String proposedJson) {
+        JsonNode root = parseJson(proposedJson);
+        if (root == null || root.isNull()) {
+            return;
+        }
+        String careTime = firstText(root, "careTime", "planTitle", "proposedTitle", "title");
+        if (careTime != null) {
+            plan.setCareTime(careTime);
+        }
+        String careContent = resolveCareContent(root);
+        if (careContent != null) {
+            plan.setCareContent(careContent);
+        }
+        String medicationReminder = firstText(root, "medicationReminder");
+        if (medicationReminder != null) {
+            plan.setMedicationReminder(medicationReminder);
+        }
+        String dietPlan = firstText(root, "dietPlan");
+        if (dietPlan != null) {
+            plan.setDietPlan(dietPlan);
+        }
+        LocalDate startDate = firstDate(root, "startDate", "effectiveDate");
+        if (startDate != null) {
+            plan.setStartDate(startDate);
+        }
+        LocalDate endDate = firstDate(root, "endDate");
+        if (endDate != null || root.has("endDate")) {
+            plan.setEndDate(endDate);
         }
     }
 
-    private String resolveProposedTitle(String proposedJson) {
-        if (proposedJson == null || proposedJson.isBlank()) {
+    private String resolveCareContent(JsonNode root) {
+        String direct = firstText(root, "careContent");
+        if (direct != null) {
+            return direct;
+        }
+        JsonNode proposedContent = root.path("proposedContent");
+        if (proposedContent.isMissingNode() || proposedContent.isNull()) {
+            return null;
+        }
+        return proposedContent.isTextual() ? proposedContent.asText() : proposedContent.toString();
+    }
+
+    private JsonNode parseJson(String json) {
+        if (json == null || json.isBlank()) {
             return null;
         }
         try {
-            JsonNode root = objectMapper.readTree(proposedJson);
-            String title = root.path("proposedTitle").asText(null);
-            if (title == null || title.isBlank()) {
-                title = root.path("title").asText(null);
-            }
-            return title;
-        } catch (Exception ignored) {
+            return objectMapper.readTree(json);
+        } catch (Exception ex) {
             return null;
         }
+    }
+
+    private void putText(com.fasterxml.jackson.databind.node.ObjectNode root, String field, String value) {
+        if (value != null && !value.isBlank()) {
+            root.put(field, value);
+        }
+    }
+
+    private void putDate(com.fasterxml.jackson.databind.node.ObjectNode root, String field, LocalDate value) {
+        if (value != null) {
+            root.put(field, value.toString());
+        }
+    }
+
+    private void copyText(JsonNode source, com.fasterxml.jackson.databind.node.ObjectNode target, String... fields) {
+        for (String field : fields) {
+            String value = source.path(field).asText(null);
+            if (value != null && !value.isBlank()) {
+                target.put(field, value);
+            }
+        }
+    }
+
+    private void copyDate(JsonNode source, com.fasterxml.jackson.databind.node.ObjectNode target, String... fields) {
+        for (String field : fields) {
+            String value = source.path(field).asText(null);
+            if (value != null && !value.isBlank()) {
+                target.put(field, value);
+            }
+        }
+    }
+
+    private String firstText(JsonNode source, String... fields) {
+        for (String field : fields) {
+            String value = source.path(field).asText(null);
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private LocalDate firstDate(JsonNode source, String... fields) {
+        for (String field : fields) {
+            String value = source.path(field).asText(null);
+            if (value == null || value.isBlank()) {
+                continue;
+            }
+            try {
+                return LocalDate.parse(value);
+            } catch (Exception ex) {
+                throw badRequest(field + " 格式非法，需为 yyyy-MM-dd");
+            }
+        }
+        return null;
     }
 
     private boolean canRead(CurrentUser currentUser) {
         return currentUser.hasRole("admin")
                 || currentUser.hasRole("nurse_leader")
+                || currentUser.hasRole("doctor")
                 || currentUser.hasRole("nurse")
                 || currentUser.hasRole("caregiver")
                 || currentUser.hasRole("family")
                 || currentUser.hasRole("elder");
     }
 
-    private void requireCarePlanManager(CurrentUser currentUser) {
+    private void requireCarePlanDraftManager(CurrentUser currentUser) {
+        if (currentUser.hasRole("admin")
+                || currentUser.hasRole("nurse_leader")
+                || currentUser.hasRole("nurse")
+                || currentUser.hasRole("caregiver")) {
+            return;
+        }
+        throw new AccessDeniedException("仅管理员/护士长/护理员可维护护理计划草稿");
+    }
+
+    private void requireCarePlanChangeInitiator(CurrentUser currentUser) {
+        if (currentUser.hasRole("admin")
+                || currentUser.hasRole("nurse_leader")
+                || currentUser.hasRole("nurse")
+                || currentUser.hasRole("caregiver")) {
+            return;
+        }
+        throw new AccessDeniedException("当前角色无权限发起护理计划审批");
+    }
+
+    private void requireLeaderReviewer(CurrentUser currentUser) {
         if (currentUser.hasRole("admin") || currentUser.hasRole("nurse_leader")) {
             return;
         }
-        throw new AccessDeniedException("仅管理员/护士长可直接维护护理计划");
+        throw new AccessDeniedException("仅管理员/护士长可进行初审");
+    }
+
+    private void requireDoctorReviewer(CurrentUser currentUser) {
+        if (currentUser.hasRole("admin") || currentUser.hasRole("doctor")) {
+            return;
+        }
+        throw new AccessDeniedException("仅管理员/医生可进行复审");
+    }
+
+    private void ensureDraftEditable(CarePlan plan) {
+        if (!"draft".equalsIgnoreCase(plan.getStatus())) {
+            throw badRequest("仅护理计划草稿可编辑或提交审批");
+        }
     }
 
     private Integer resolveCreateVersion(Long elderId, Integer requestedVersion) {
@@ -405,12 +698,12 @@ public class CarePlanService {
         return version;
     }
 
-    private String normalizeStatus(String status) {
-        String normalized = status == null ? "active" : status.trim().toLowerCase(Locale.ROOT);
-        if (!DIRECT_PLAN_STATUSES.contains(normalized)) {
-            throw badRequest("非法状态，仅支持 draft/active/inactive/archived");
+    private String normalizeDraftStatus(String status) {
+        String normalized = status == null || status.isBlank() ? "draft" : status.trim().toLowerCase(Locale.ROOT);
+        if (!"draft".equals(normalized)) {
+            throw badRequest("护理计划直接维护仅支持 draft 状态，生效需走审批");
         }
-        return normalized;
+        return "draft";
     }
 
     private void validateDateRange(LocalDate startDate, LocalDate endDate) {
@@ -421,6 +714,86 @@ public class CarePlanService {
 
     private LocalDate resolveStartDate(UpsertCarePlanRequest request) {
         return request.getStartDate() != null ? request.getStartDate() : request.getEffectiveDate();
+    }
+
+    private Page<User> searchVisibleElders(CurrentUser currentUser, Long elderId, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+        if (elderId != null) {
+            User elder = userRepository.findByUserIdAndDeletedAtIsNull(elderId)
+                    .orElseThrow(() -> new NotFoundException("老人不存在"));
+            if (!"elder".equalsIgnoreCase(elder.getRole())) {
+                throw badRequest("elderId 对应的用户不是老人");
+            }
+            if (!canViewElderInCarePlanList(currentUser, elderId)) {
+                throw new AccessDeniedException("无权限访问该老人数据");
+            }
+            return new org.springframework.data.domain.PageImpl<>(List.of(elder), pageable, 1);
+        }
+
+        if (currentUser.hasRole("admin") || currentUser.hasRole("nurse_leader")) {
+            return userRepository.search(null, "elder", "active", pageable);
+        }
+
+        if (currentUser.hasRole("doctor")) {
+            List<Long> elderIds = carePlanChangeRepository.findDistinctElderIdsByStatus("doctor_review");
+            if (elderIds.isEmpty()) {
+                return new org.springframework.data.domain.PageImpl<>(List.of(), pageable, 0);
+            }
+            return userRepository.searchByRoleAndIds("elder", elderIds, null, "active", pageable);
+        }
+
+        List<Long> visibleElderIds = permissionService.getVisibleElderIds(currentUser);
+        if (visibleElderIds == null) {
+            return userRepository.search(null, "elder", "active", pageable);
+        }
+        if (visibleElderIds.isEmpty()) {
+            return new org.springframework.data.domain.PageImpl<>(List.of(), pageable, 0);
+        }
+        return userRepository.searchByRoleAndIds("elder", visibleElderIds, null, "active", pageable);
+    }
+
+    private boolean canViewElderInCarePlanList(CurrentUser currentUser, Long elderId) {
+        if (currentUser.hasRole("admin") || currentUser.hasRole("nurse_leader")) {
+            return true;
+        }
+        if (currentUser.hasRole("doctor")) {
+            return carePlanChangeRepository.findDistinctElderIdsByStatus("doctor_review").contains(elderId);
+        }
+        List<Long> visibleElderIds = permissionService.getVisibleElderIds(currentUser);
+        return visibleElderIds != null && visibleElderIds.contains(elderId);
+    }
+
+    private Map<Long, CarePlan> loadLatestPlanMap(List<Long> elderIds, String status) {
+        if (elderIds.isEmpty()) {
+            return Map.of();
+        }
+        String normalizedStatus = status == null || status.isBlank() ? null : status.trim().toLowerCase(Locale.ROOT);
+        Map<Long, CarePlan> result = new LinkedHashMap<>();
+        for (CarePlan plan : carePlanRepository.findByElderIdInOrderByVersionDescUpdatedAtDesc(elderIds)) {
+            if (normalizedStatus != null && !normalizedStatus.equalsIgnoreCase(plan.getStatus())) {
+                continue;
+            }
+            result.putIfAbsent(plan.getElderId(), plan);
+        }
+        return result;
+    }
+
+    private Map<Long, CarePlanChangeRequest> loadLatestChangeMap(List<Long> elderIds, CurrentUser currentUser) {
+        if (elderIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, CarePlanChangeRequest> result = new LinkedHashMap<>();
+        for (CarePlanChangeRequest change : carePlanChangeRepository.findByElderIdInOrderByCreatedAtDesc(elderIds)) {
+            if (currentUser.hasRole("doctor")) {
+                if (!"doctor_review".equalsIgnoreCase(change.getStatus())) {
+                    continue;
+                }
+            } else if (!Set.of("pending", "doctor_review").contains(change.getStatus().toLowerCase(Locale.ROOT))) {
+                continue;
+            }
+            result.putIfAbsent(change.getElderId(), change);
+        }
+        return result;
     }
 
     private void applyUpsertFields(CarePlan plan, UpsertCarePlanRequest request) {
@@ -459,6 +832,14 @@ public class CarePlanService {
 
     private BusinessException badRequest(String message) {
         return new BusinessException(ErrorCode.BAD_REQUEST, message, HttpStatus.BAD_REQUEST);
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private CarePlanChangeListResponse emptyPage(int page, int size) {

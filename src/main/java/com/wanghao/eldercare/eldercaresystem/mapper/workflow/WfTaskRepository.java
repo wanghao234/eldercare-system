@@ -9,6 +9,8 @@ import com.wanghao.eldercare.eldercaresystem.common.security.scope.*;
 import com.wanghao.eldercare.eldercaresystem.common.ws.*;
 import com.wanghao.eldercare.eldercaresystem.controller.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.dto.workflow.*;
+import com.wanghao.eldercare.eldercaresystem.entity.admission.AdmissionRecord;
+import com.wanghao.eldercare.eldercaresystem.entity.careteam.CareTeamAssignment;
 import com.wanghao.eldercare.eldercaresystem.entity.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.service.workflow.*;
 import jakarta.transaction.Transactional;
@@ -30,6 +32,22 @@ public interface WfTaskRepository extends JpaRepository<WfTask, Long> {
                             @Param("role") String role,
                             @Param("statuses") Collection<String> statuses,
                             Pageable pageable);
+
+    @Query("""
+            select distinct t
+            from WfTask t, WfInstance i, AdmissionRecord a, CareTeamAssignment c
+            where t.instanceId = i.instanceId
+              and i.bizType = 'admission'
+              and i.bizId = a.admissionId
+              and a.elderId = c.elderId
+              and c.nurseId = :userId
+              and c.isActive = 1
+              and t.nodeKey = 'bed_reserve'
+              and t.status in :statuses
+            order by t.createdAt desc
+            """)
+    List<WfTask> findAdmissionBedReserveTodoForCareTeam(@Param("userId") Long userId,
+                                                        @Param("statuses") Collection<String> statuses);
 
     @Query("select t from WfTask t where t.status in :statuses")
     Page<WfTask> findAllByStatusIn(@Param("statuses") Collection<String> statuses, Pageable pageable);
