@@ -17,8 +17,15 @@ import com.wanghao.eldercare.eldercaresystem.service.ai.OpenAiCompatibleAiClient
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.Period;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -30,6 +37,32 @@ import org.springframework.util.StringUtils;
 public class AiCarePlanServiceImpl implements AiCarePlanService {
 
     private static final Logger log = LoggerFactory.getLogger(AiCarePlanServiceImpl.class);
+    private static final Set<String> DRAFT_FIELD_NAMES = Set.of(
+            "careLevel",
+            "healthAssessment",
+            "nursingProblem",
+            "riskTags",
+            "nursingGoal",
+            "dailyCare",
+            "dietPlan",
+            "medicationCare",
+            "healthMonitoring",
+            "rehabilitationActivity",
+            "psychologicalCare",
+            "safetyPrecaution",
+            "executionFrequency",
+            "evaluation",
+            "aiGenerated");
+    private static final List<String> WRAPPER_FIELD_NAMES = List.of(
+            "draft",
+            "carePlan",
+            "carePlanDraft",
+            "plan",
+            "result",
+            "data",
+            "output",
+            "content",
+            "json");
 
     private final UserRepository userRepository;
     private final ElderProfileRepository elderProfileRepository;
@@ -62,19 +95,24 @@ public class AiCarePlanServiceImpl implements AiCarePlanService {
         try {
             String aiContent = aiClient.chat(buildSystemPrompt(), buildUserPrompt(elder, profile, request));
             String cleaned = stripCodeFence(aiContent);
-            return normalizeDraft(parseDraft(cleaned), profile);
+            try {
+                return normalizeDraft(parseDraft(cleaned), profile);
+            } catch (IOException ex) {
+                log.warn("AI护理计划草稿解析失败，已切换文本兜底: {}", ex.getMessage());
+                return normalizeDraft(buildFallbackDraftFromText(cleaned, profile), profile);
+            }
         } catch (BusinessException ex) {
             throw ex;
-        } catch (IOException ex) {
-            log.warn("AI护理计划草稿解析失败: {}", ex.getMessage());
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "AI 返回结果解析失败，请稍后重试", HttpStatus.INTERNAL_SERVER_ERROR);
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             log.warn("AI护理计划草稿生成被中断: {}", ex.getMessage());
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "AI护理计划生成失败，请稍后重试", HttpStatus.INTERNAL_SERVER_ERROR);
+            return normalizeDraft(buildFallbackDraftFromText("", profile), profile);
+        } catch (IOException ex) {
+            log.warn("AI护理计划草稿生成失败，已切换默认草稿: {}", ex.getMessage());
+            return normalizeDraft(buildFallbackDraftFromText("", profile), profile);
         } catch (Exception ex) {
-            log.warn("AI护理计划草稿生成失败: {}", ex.getMessage());
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "AI护理计划生成失败，请稍后重试", HttpStatus.INTERNAL_SERVER_ERROR);
+            log.warn("AI护理计划草稿生成失败，已切换默认草稿: {}", ex.getMessage());
+            return normalizeDraft(buildFallbackDraftFromText("", profile), profile);
         }
     }
 
@@ -147,31 +185,198 @@ public class AiCarePlanServiceImpl implements AiCarePlanService {
     }
 
     private AiCarePlanDraftDTO parseDraft(String cleaned) throws IOException {
-        JsonNode root = objectMapper.readTree(cleaned);
+        JsonNode root = extractDraftJsonNode(cleaned);
         if (root == null || !root.isObject()) {
             throw new IOException("AI 返回的护理计划不是 JSON 对象");
         }
         return objectMapper.treeToValue(root, AiCarePlanDraftDTO.class);
     }
 
+    private JsonNode extractDraftJsonNode(String content) throws IOException {
+        String normalized = content == null ? "" : content.trim();
+        if (!StringUtils.hasText(normalized)) {
+            throw new IOException("AI 返回内容为空");
+        }
+
+        List<String> candidates = new ArrayList<>();
+        candidates.add(normalized);
+        String extractedJson = extractFirstJsonSegment(normalized);
+        if (StringUtils.hasText(extractedJson) && !normalized.equals(extractedJson)) {
+            candidates.add(extractedJson);
+        }
+
+        IOException lastException = null;
+        for (String candidate : new LinkedHashSet<>(candidates)) {
+            try {
+                JsonNode parsed = objectMapper.readTree(candidate);
+                JsonNode draftNode = unwrapDraftNode(parsed);
+                if (draftNode != null && draftNode.isObject()) {
+                    return draftNode;
+                }
+                lastException = new IOException("AI 返回的护理计划缺少可识别的 JSON 对象");
+            } catch (IOException ex) {
+                lastException = ex;
+            }
+        }
+        throw lastException == null ? new IOException("AI 返回结果解析失败") : lastException;
+    }
+
+    private JsonNode unwrapDraftNode(JsonNode node) throws IOException {
+        if (node == null || node.isNull() || node.isMissingNode()) {
+            return null;
+        }
+        if (node.isTextual()) {
+            String text = stripCodeFence(node.asText());
+            if (!StringUtils.hasText(text)) {
+                return null;
+            }
+            return extractDraftJsonNode(text);
+        }
+        if (node.isObject()) {
+            if (looksLikeDraftObject(node)) {
+                return node;
+            }
+            for (String fieldName : WRAPPER_FIELD_NAMES) {
+                JsonNode child = node.get(fieldName);
+                JsonNode unwrapped = unwrapDraftNode(child);
+                if (unwrapped != null) {
+                    return unwrapped;
+                }
+            }
+        }
+        if (node.isContainerNode()) {
+            Deque<JsonNode> queue = new ArrayDeque<>();
+            queue.add(node);
+            while (!queue.isEmpty()) {
+                JsonNode current = queue.removeFirst();
+                if (current == null || current.isNull() || current.isMissingNode()) {
+                    continue;
+                }
+                if (current != node && current.isObject() && looksLikeDraftObject(current)) {
+                    return current;
+                }
+                if (current.isTextual()) {
+                    JsonNode unwrapped = unwrapDraftNode(current);
+                    if (unwrapped != null) {
+                        return unwrapped;
+                    }
+                    continue;
+                }
+                if (current.isContainerNode()) {
+                    current.elements().forEachRemaining(queue::addLast);
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean looksLikeDraftObject(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            return false;
+        }
+        int matchedFieldCount = 0;
+        for (String fieldName : DRAFT_FIELD_NAMES) {
+            if (node.has(fieldName)) {
+                matchedFieldCount += 1;
+            }
+        }
+        return matchedFieldCount >= 2;
+    }
+
+    private String extractFirstJsonSegment(String content) {
+        if (!StringUtils.hasText(content)) {
+            return null;
+        }
+        int objectStart = content.indexOf('{');
+        int arrayStart = content.indexOf('[');
+        int start;
+        char openChar;
+        char closeChar;
+        if (objectStart < 0 && arrayStart < 0) {
+            return null;
+        }
+        if (objectStart >= 0 && (arrayStart < 0 || objectStart < arrayStart)) {
+            start = objectStart;
+            openChar = '{';
+            closeChar = '}';
+        } else {
+            start = arrayStart;
+            openChar = '[';
+            closeChar = ']';
+        }
+
+        boolean inString = false;
+        boolean escaped = false;
+        int depth = 0;
+        for (int i = start; i < content.length(); i++) {
+            char current = content.charAt(i);
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (current == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (current == '"') {
+                inString = !inString;
+                continue;
+            }
+            if (inString) {
+                continue;
+            }
+            if (current == openChar) {
+                depth += 1;
+            } else if (current == closeChar) {
+                depth -= 1;
+                if (depth == 0) {
+                    return content.substring(start, i + 1).trim();
+                }
+            }
+        }
+        return null;
+    }
+
     private AiCarePlanDraftDTO normalizeDraft(AiCarePlanDraftDTO draft, ElderProfileEntity profile) {
         AiCarePlanDraftDTO normalized = draft == null ? new AiCarePlanDraftDTO() : draft;
         normalized.setCareLevel(firstNonBlank(normalized.getCareLevel(), profile == null ? null : profile.getCareLevel()));
-        normalized.setHealthAssessment(safe(normalized.getHealthAssessment()));
-        normalized.setNursingProblem(safe(normalized.getNursingProblem()));
-        normalized.setRiskTags(safe(normalized.getRiskTags()));
-        normalized.setNursingGoal(safe(normalized.getNursingGoal()));
-        normalized.setDailyCare(safe(normalized.getDailyCare()));
-        normalized.setDietPlan(safe(normalized.getDietPlan()));
-        normalized.setMedicationCare(safe(normalized.getMedicationCare()));
-        normalized.setHealthMonitoring(safe(normalized.getHealthMonitoring()));
-        normalized.setRehabilitationActivity(safe(normalized.getRehabilitationActivity()));
-        normalized.setPsychologicalCare(safe(normalized.getPsychologicalCare()));
-        normalized.setSafetyPrecaution(safe(normalized.getSafetyPrecaution()));
-        normalized.setExecutionFrequency(safe(normalized.getExecutionFrequency()));
-        normalized.setEvaluation(safe(normalized.getEvaluation()));
+        normalized.setHealthAssessment(firstNonBlank(normalized.getHealthAssessment(), buildDefaultHealthAssessment(profile)));
+        normalized.setNursingProblem(firstNonBlank(normalized.getNursingProblem(), "需持续关注老人日常照护需求、慢病管理与安全风险。"));
+        normalized.setRiskTags(firstNonBlank(normalized.getRiskTags(), buildDefaultRiskTags(profile)));
+        normalized.setNursingGoal(firstNonBlank(normalized.getNursingGoal(), "维持老人当前健康稳定状态，提升日常生活舒适度与安全性。"));
+        normalized.setDailyCare(firstNonBlank(normalized.getDailyCare(), "协助完成日常起居照护，观察睡眠、饮食、排泄与精神状态变化。"));
+        normalized.setDietPlan(firstNonBlank(normalized.getDietPlan(), buildDefaultDietPlan(profile)));
+        normalized.setMedicationCare(firstNonBlank(normalized.getMedicationCare(), "按时提醒并协助用药，观察用药后不适反应并及时反馈。"));
+        normalized.setHealthMonitoring(firstNonBlank(normalized.getHealthMonitoring(), "每日关注生命体征、精神状态及基础健康指标变化。"));
+        normalized.setRehabilitationActivity(firstNonBlank(normalized.getRehabilitationActivity(), "根据老人耐受情况安排轻度活动或康复训练，循序渐进。"));
+        normalized.setPsychologicalCare(firstNonBlank(normalized.getPsychologicalCare(), "加强沟通陪伴，关注情绪变化并给予安抚支持。"));
+        normalized.setSafetyPrecaution(firstNonBlank(normalized.getSafetyPrecaution(), "加强防跌倒、防滑与夜间巡视，及时排查环境安全隐患。"));
+        normalized.setExecutionFrequency(firstNonBlank(normalized.getExecutionFrequency(), "每日"));
+        normalized.setEvaluation(firstNonBlank(normalized.getEvaluation(), "每周评估一次护理执行效果，并根据老人状态及时调整。"));
         normalized.setAiGenerated(Boolean.TRUE);
         return normalized;
+    }
+
+    private AiCarePlanDraftDTO buildFallbackDraftFromText(String content, ElderProfileEntity profile) {
+        String normalizedText = normalizeLooseText(content);
+        Map<String, String> sections = extractLooseSections(normalizedText);
+        AiCarePlanDraftDTO draft = new AiCarePlanDraftDTO();
+        draft.setCareLevel(firstNonBlank(sections.get("careLevel"), profile == null ? null : profile.getCareLevel()));
+        draft.setHealthAssessment(firstNonBlank(sections.get("healthAssessment"), summarizeText(normalizedText)));
+        draft.setNursingProblem(sections.get("nursingProblem"));
+        draft.setRiskTags(sections.get("riskTags"));
+        draft.setNursingGoal(sections.get("nursingGoal"));
+        draft.setDailyCare(sections.get("dailyCare"));
+        draft.setDietPlan(firstNonBlank(sections.get("dietPlan"), profile == null ? null : profile.getDietTaboo()));
+        draft.setMedicationCare(sections.get("medicationCare"));
+        draft.setHealthMonitoring(sections.get("healthMonitoring"));
+        draft.setRehabilitationActivity(sections.get("rehabilitationActivity"));
+        draft.setPsychologicalCare(sections.get("psychologicalCare"));
+        draft.setSafetyPrecaution(sections.get("safetyPrecaution"));
+        draft.setExecutionFrequency(sections.get("executionFrequency"));
+        draft.setEvaluation(sections.get("evaluation"));
+        draft.setAiGenerated(Boolean.TRUE);
+        return draft;
     }
 
     private String stripCodeFence(String content) {
@@ -186,6 +391,115 @@ public class AiCarePlanServiceImpl implements AiCarePlanService {
             }
         }
         return cleaned.trim();
+    }
+
+    private Map<String, String> extractLooseSections(String content) {
+        Map<String, String> sections = new HashMap<>();
+        if (!StringUtils.hasText(content)) {
+            return sections;
+        }
+        for (String line : content.split("\\R+")) {
+            String normalizedLine = safe(line);
+            if (!StringUtils.hasText(normalizedLine)) {
+                continue;
+            }
+            int separatorIndex = findSectionSeparator(normalizedLine);
+            if (separatorIndex < 0) {
+                continue;
+            }
+            String label = normalizedLine.substring(0, separatorIndex).trim();
+            String value = normalizedLine.substring(separatorIndex + 1).trim();
+            if (!StringUtils.hasText(label) || !StringUtils.hasText(value)) {
+                continue;
+            }
+            String fieldName = mapLooseLabelToField(label);
+            if (fieldName != null && !sections.containsKey(fieldName)) {
+                sections.put(fieldName, value);
+            }
+        }
+        return sections;
+    }
+
+    private int findSectionSeparator(String line) {
+        int colonIndex = line.indexOf(':');
+        int chineseColonIndex = line.indexOf('：');
+        if (colonIndex < 0) {
+            return chineseColonIndex;
+        }
+        if (chineseColonIndex < 0) {
+            return colonIndex;
+        }
+        return Math.min(colonIndex, chineseColonIndex);
+    }
+
+    private String mapLooseLabelToField(String label) {
+        String normalized = label.toLowerCase()
+                .replace(" ", "")
+                .replace("-", "")
+                .replace("_", "");
+        return switch (normalized) {
+            case "carelevel", "护理等级" -> "careLevel";
+            case "healthassessment", "健康评估" -> "healthAssessment";
+            case "nursingproblem", "护理问题" -> "nursingProblem";
+            case "risktags", "风险标签", "风险提示" -> "riskTags";
+            case "nursinggoal", "护理目标" -> "nursingGoal";
+            case "dailycare", "生活护理" -> "dailyCare";
+            case "dietplan", "饮食计划", "饮食护理" -> "dietPlan";
+            case "medicationcare", "用药护理", "用药提醒" -> "medicationCare";
+            case "healthmonitoring", "健康监测" -> "healthMonitoring";
+            case "rehabilitationactivity", "康复活动", "康复训练" -> "rehabilitationActivity";
+            case "psychologicalcare", "心理关怀" -> "psychologicalCare";
+            case "safetyprecaution", "安全防护", "安全措施" -> "safetyPrecaution";
+            case "executionfrequency", "执行频率" -> "executionFrequency";
+            case "evaluation", "护理评价", "评估建议" -> "evaluation";
+            default -> null;
+        };
+    }
+
+    private String normalizeLooseText(String content) {
+        return safe(content)
+                .replace("\\n", "\n")
+                .replace('\r', '\n')
+                .replace("```json", "")
+                .replace("```", "")
+                .trim();
+    }
+
+    private String summarizeText(String content) {
+        String normalized = safe(content).replaceAll("\\s+", " ");
+        if (!StringUtils.hasText(normalized)) {
+            return "";
+        }
+        return normalized.length() <= 120 ? normalized : normalized.substring(0, 120).trim();
+    }
+
+    private String buildDefaultHealthAssessment(ElderProfileEntity profile) {
+        if (profile == null) {
+            return "需结合老人当前身体状况、日常生活能力与照护风险持续开展综合健康评估。";
+        }
+        String conditions = safe(profile.getChronicConditions());
+        if (StringUtils.hasText(conditions)) {
+            return "老人存在%s，需持续关注慢病管理、功能状态与日常照护风险。".formatted(conditions);
+        }
+        return "需结合老人当前身体状况、日常生活能力与照护风险持续开展综合健康评估。";
+    }
+
+    private String buildDefaultRiskTags(ElderProfileEntity profile) {
+        if (profile == null) {
+            return "日常照护,安全风险";
+        }
+        String conditions = safe(profile.getChronicConditions());
+        if (StringUtils.hasText(conditions)) {
+            return "慢病管理,日常照护,安全风险";
+        }
+        return "日常照护,安全风险";
+    }
+
+    private String buildDefaultDietPlan(ElderProfileEntity profile) {
+        if (profile == null || !StringUtils.hasText(profile.getDietTaboo())) {
+            return "保持清淡均衡饮食，注意补水，根据老人进食情况少量多餐。";
+        }
+        return "结合饮食禁忌“%s”安排清淡均衡饮食，注意观察进食与消化情况。".formatted(safe(profile.getDietTaboo()));
     }
 
     private String firstNonBlank(String primary, String fallback) {

@@ -54,6 +54,8 @@ public interface CareTeamAssignmentRepository extends JpaRepository<CareTeamAssi
 
     Optional<CareTeamAssignment> findFirstByElderIdAndIsActiveOrderByAssignmentIdAsc(Long elderId, Integer isActive);
 
+    List<CareTeamAssignment> findAllByElderIdAndIsActiveOrderByAssignmentIdAsc(Long elderId, Integer isActive);
+
     List<CareTeamAssignment> findAllByElderIdAndIsActiveAndNurseIdIsNotNullOrderByAssignmentIdAsc(Long elderId, Integer isActive);
 
     List<CareTeamAssignment> findAllByElderIdAndIsActiveAndFamilyIdIsNotNullOrderByAssignmentIdAsc(Long elderId, Integer isActive);

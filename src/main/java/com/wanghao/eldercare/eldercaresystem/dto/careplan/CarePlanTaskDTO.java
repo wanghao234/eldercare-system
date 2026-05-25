@@ -12,6 +12,7 @@ public class CarePlanTaskDTO {
     private Long carePlanId;
     private Long elderId;
     private Long assignedNurseId;
+    private String assignedNurseName;
     private String taskType;
     private String taskTitle;
     private String taskContent;
@@ -88,6 +89,14 @@ public class CarePlanTaskDTO {
 
     public void setAssignedNurseId(Long assignedNurseId) {
         this.assignedNurseId = assignedNurseId;
+    }
+
+    public String getAssignedNurseName() {
+        return assignedNurseName;
+    }
+
+    public void setAssignedNurseName(String assignedNurseName) {
+        this.assignedNurseName = assignedNurseName;
     }
 
     public String getTaskType() {

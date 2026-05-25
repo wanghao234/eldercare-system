@@ -22,6 +22,7 @@ import com.wanghao.eldercare.eldercaresystem.dto.careplan.GenerateCarePlanTasksR
 import com.wanghao.eldercare.eldercaresystem.dto.careplan.UpdateCarePlanTaskRequest;
 import com.wanghao.eldercare.eldercaresystem.entity.careplan.CarePlan;
 import com.wanghao.eldercare.eldercaresystem.entity.careplan.CarePlanTask;
+import com.wanghao.eldercare.eldercaresystem.entity.careteam.CareTeamAssignment;
 import com.wanghao.eldercare.eldercaresystem.entity.shift.StaffShiftSchedule;
 import com.wanghao.eldercare.eldercaresystem.entity.user.User;
 import com.wanghao.eldercare.eldercaresystem.mapper.careplan.CarePlanRepository;
@@ -131,21 +132,15 @@ public class CarePlanTaskService {
         CarePlan plan = carePlanRepository.findById(carePlanId)
                 .orElseThrow(() -> new NotFoundException("护理计划不存在"));
         permissionService.assertCanAccessElder(currentUser, plan.getElderId());
-        return carePlanTaskRepository.findAllByCarePlanIdOrderByScheduledAtAscCreatedAtAscTaskIdAsc(carePlanId)
-                .stream()
-                .map(CarePlanTaskDTO::from)
-                .toList();
+        return toTaskDtos(carePlanTaskRepository.findAllByCarePlanIdOrderByScheduledAtAscCreatedAtAscTaskIdAsc(carePlanId));
     }
 
     @Transactional(readOnly = true)
     public List<CarePlanTaskDTO> listMyTasks(CurrentUser currentUser) {
         requireTaskExecutor(currentUser);
-        return carePlanTaskRepository.findAllByAssignedNurseIdAndStatusNotInOrderByScheduledAtAscCreatedAtAscTaskIdAsc(
-                        currentUser.getUserId(),
-                        List.of("draft", "cancelled"))
-                .stream()
-                .map(CarePlanTaskDTO::from)
-                .toList();
+        return toTaskDtos(carePlanTaskRepository.findAllByAssignedNurseIdAndStatusInOrderByScheduledAtAscCreatedAtAscTaskIdAsc(
+                currentUser.getUserId(),
+                List.of("pending", "completed", "cancelled")));
     }
 
     @Transactional(readOnly = true)
@@ -154,7 +149,7 @@ public class CarePlanTaskService {
         return filterAccessibleTasks(currentUser, carePlanTaskRepository.findAllByStatusIgnoreCaseOrderByScheduledAtAscCreatedAtAscTaskIdAsc("pending"))
                 .stream()
                 .filter(this::isTaskOverdue)
-                .map(CarePlanTaskDTO::from)
+                .map(task -> toTaskDto(task, null))
                 .toList();
     }
 
@@ -206,7 +201,7 @@ public class CarePlanTaskService {
         response.setTasksByType(buildTypeSummaries(tasks));
         response.setTasksByDate(buildDateSummaries(tasks));
         response.setRecentExecutionRecords(buildRecentExecutionRecords(tasks));
-        response.setOverdueTasks(tasks.stream().filter(this::isTaskOverdue).map(CarePlanTaskDTO::from).toList());
+        response.setOverdueTasks(tasks.stream().filter(this::isTaskOverdue).map(task -> toTaskDto(task, null)).toList());
         response.setSummaryText(buildExecutionSummaryText(response));
         return response;
     }
@@ -219,12 +214,6 @@ public class CarePlanTaskService {
         permissionService.assertCanAccessElder(currentUser, plan.getElderId());
 
         Long assignedNurseId = request.getAssignedNurseId();
-        if (assignedNurseId == null) {
-            assignedNurseId = careTeamAssignmentRepository.findActiveNurseIdsByElderId(plan.getElderId())
-                    .stream()
-                    .findFirst()
-                    .orElse(null);
-        }
 
         CarePlanTask task = new CarePlanTask();
         task.setCarePlanId(plan.getCarePlanId());
@@ -242,9 +231,9 @@ public class CarePlanTaskService {
         task.setCreatedAt(now);
         task.setUpdatedAt(now);
         if (task.getAssignedNurseId() == null) {
-            autoAssignTasksBySchedule(List.of(task), plan.getElderId());
+            autoAssignTasksByCarePlanId(plan.getCarePlanId(), List.of(task), AutoAssignMode.FILL_UNASSIGNED_ONLY);
         }
-        return CarePlanTaskDTO.from(carePlanTaskRepository.save(task));
+        return toTaskDto(carePlanTaskRepository.save(task), null);
     }
 
     @Transactional
@@ -271,7 +260,7 @@ public class CarePlanTaskService {
         task.setStatus("completed");
         task.setExecutedAt(now);
         task.setUpdatedAt(now);
-        return CarePlanTaskDTO.from(carePlanTaskRepository.save(task));
+        return toTaskDto(carePlanTaskRepository.save(task), null);
     }
 
     @Transactional
@@ -300,7 +289,7 @@ public class CarePlanTaskService {
         }
         task.setStatus(normalizeMutableStatus(request.getStatus(), task.getStatus()));
         task.setUpdatedAt(LocalDateTime.now());
-        return CarePlanTaskDTO.from(carePlanTaskRepository.save(task));
+        return toTaskDto(carePlanTaskRepository.save(task), null);
     }
 
     @Transactional
@@ -357,11 +346,13 @@ public class CarePlanTaskService {
             response.setMessage("选中的任务中没有可确认的 draft 任务");
             return response;
         }
-        Long elderId = draftTasks.get(0).getElderId();
-        autoAssignTasksBySchedule(draftTasks, elderId);
+        Long carePlanId = draftTasks.get(0).getCarePlanId();
+        autoAssignTasksByCarePlanId(carePlanId, draftTasks, AutoAssignMode.FILL_UNASSIGNED_ONLY);
         boolean hasUnassigned = draftTasks.stream().anyMatch(task -> task.getAssignedNurseId() == null);
         if (hasUnassigned) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "存在任务未绑定护理人员，请先分配护理人员后再确认", HttpStatus.BAD_REQUEST);
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "存在未分配护理人员的任务，请先完成护理团队绑定、补充排班或手动指定护理人员后再确认分配。",
+                    HttpStatus.BAD_REQUEST);
         }
         LocalDateTime now = LocalDateTime.now();
         for (CarePlanTask task : draftTasks) {
@@ -369,7 +360,6 @@ public class CarePlanTaskService {
             task.setUpdatedAt(now);
         }
         carePlanTaskRepository.saveAll(draftTasks);
-        Long carePlanId = draftTasks.get(0).getCarePlanId();
         createTaskNotifications(draftTasks, carePlanId);
         response.setCarePlanId(carePlanId);
         response.setConfirmedTaskCount(draftTasks.size());
@@ -397,7 +387,7 @@ public class CarePlanTaskService {
             }
             applyTaskSchedule(task, request.getScheduledDate(), request.getScheduledTime(), null);
             task.setUpdatedAt(LocalDateTime.now());
-            result.add(CarePlanTaskDTO.from(carePlanTaskRepository.save(task)));
+            result.add(toTaskDto(carePlanTaskRepository.save(task), null));
         }
         return result;
     }
@@ -422,7 +412,7 @@ public class CarePlanTaskService {
             }
             task.setAssignedNurseId(request.getAssignedNurseId());
             task.setUpdatedAt(LocalDateTime.now());
-            result.add(CarePlanTaskDTO.from(carePlanTaskRepository.save(task)));
+            result.add(toTaskDto(carePlanTaskRepository.save(task), null));
         }
         return result;
     }
@@ -434,22 +424,26 @@ public class CarePlanTaskService {
                 .orElseThrow(() -> new NotFoundException("护理计划不存在"));
         permissionService.assertCanAccessElder(currentUser, plan.getElderId());
         List<CarePlanTask> tasks = carePlanTaskRepository
-                .findAllByCarePlanIdAndStatusInOrderByScheduledAtAscCreatedAtAscTaskIdAsc(carePlanId, List.of("draft", "pending"));
+                .findAllByCarePlanIdAndStatusOrderByScheduledAtAscCreatedAtAscTaskIdAsc(carePlanId, "draft");
         AutoAssignCarePlanTasksResponse response = new AutoAssignCarePlanTasksResponse();
         response.setCarePlanId(carePlanId);
         if (tasks.isEmpty()) {
             response.setAssignedCount(0);
             response.setUnassignedCount(0);
-            response.setMessage("当前护理计划没有可自动分配的 draft/pending 任务");
+            response.setFallbackAssignedCount(0);
+            response.setScheduleMatchedCount(0);
+            response.setMessage("当前护理计划没有可自动分配的 draft 任务");
             return response;
         }
-        AssignmentSummary summary = autoAssignTasksBySchedule(tasks, plan.getElderId());
+        AssignmentSummary summary = autoAssignTasksByCarePlanId(carePlanId, tasks, AutoAssignMode.REASSIGN_ALL_DRAFTS);
         carePlanTaskRepository.saveAll(tasks);
         response.setAssignedCount(summary.assignedCount());
         response.setUnassignedCount(summary.unassignedCount());
+        response.setFallbackAssignedCount(summary.fallbackAssignedCount());
+        response.setScheduleMatchedCount(summary.scheduleMatchedCount());
         response.setMessage(summary.unassignedCount() > 0
-                ? "部分任务未匹配到排班护理人员，请手动分配"
-                : "护理任务已根据排班自动分配");
+                ? "部分任务仍未分配护理人员，请先完成护理团队绑定、补充排班或手动指定护理人员。"
+                : "护理任务已按排班优先、绑定关系兜底完成自动分配");
         return response;
     }
 
@@ -469,12 +463,12 @@ public class CarePlanTaskService {
             return response;
         }
 
-        autoAssignTasksBySchedule(draftTasks, plan.getElderId());
+        autoAssignTasksByCarePlanId(carePlanId, draftTasks, AutoAssignMode.FILL_UNASSIGNED_ONLY);
         boolean hasUnassigned = draftTasks.stream().anyMatch(task -> task.getAssignedNurseId() == null);
         if (hasUnassigned) {
-            response.setConfirmedTaskCount(0);
-            response.setMessage("存在未分配护理人员的任务，请先自动分配或手动指定护理人员");
-            return response;
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "存在未分配护理人员的任务，请先完成护理团队绑定、补充排班或手动指定护理人员后再确认分配。",
+                    HttpStatus.BAD_REQUEST);
         }
 
         LocalDateTime now = LocalDateTime.now();
@@ -643,15 +637,18 @@ public class CarePlanTaskService {
                 tasks.add(buildTaskEntity(plan, null, draft, now));
             }
         }
-        AssignmentSummary assignmentSummary = autoAssignTasksBySchedule(tasks, plan.getElderId());
+        AssignmentSummary assignmentSummary = autoAssignTasksByCarePlanId(
+                plan.getCarePlanId(),
+                tasks,
+                AutoAssignMode.FILL_UNASSIGNED_ONLY);
         carePlanTaskRepository.saveAll(tasks);
         if (assignmentSummary.assignedCount() == 0) {
-            return TaskGenerationOutcome.generated(plan.getCarePlanId(), tasks.size(), "护理任务草稿已生成，但未匹配到排班护理人员，请先自动分配或手动指定");
+            return TaskGenerationOutcome.generated(plan.getCarePlanId(), tasks.size(), "护理任务草稿已生成，但当前没有可用的绑定护理人员，任务保持未分配");
         }
         if (assignmentSummary.unassignedCount() > 0) {
-            return TaskGenerationOutcome.generated(plan.getCarePlanId(), tasks.size(), "护理任务草稿已生成，部分任务未匹配到排班护理人员");
+            return TaskGenerationOutcome.generated(plan.getCarePlanId(), tasks.size(), "护理任务草稿已生成，部分任务已自动分配，其余任务保持未分配");
         }
-        return TaskGenerationOutcome.generated(plan.getCarePlanId(), tasks.size(), "护理任务草稿已生成，并已根据排班推荐护理人员");
+        return TaskGenerationOutcome.generated(plan.getCarePlanId(), tasks.size(), "护理任务草稿已生成，并已按排班优先自动分配护理人员");
     }
 
     private GenerateCarePlanTasksResponse toResponse(TaskGenerationOutcome outcome) {
@@ -663,50 +660,77 @@ public class CarePlanTaskService {
         return response;
     }
 
-    private AssignmentSummary autoAssignTasksBySchedule(List<CarePlanTask> tasks, Long elderId) {
+    public AssignmentSummary autoAssignTasksByCarePlanId(Long carePlanId) {
+        List<CarePlanTask> tasks = carePlanTaskRepository
+                .findAllByCarePlanIdAndStatusOrderByScheduledAtAscCreatedAtAscTaskIdAsc(carePlanId, "draft");
+        AssignmentSummary summary = autoAssignTasksByCarePlanId(carePlanId, tasks, AutoAssignMode.REASSIGN_ALL_DRAFTS);
+        if (!tasks.isEmpty()) {
+            carePlanTaskRepository.saveAll(tasks);
+        }
+        return summary;
+    }
+
+    private AssignmentSummary autoAssignTasksByCarePlanId(Long carePlanId,
+                                                          List<CarePlanTask> tasks,
+                                                          AutoAssignMode mode) {
         if (tasks == null || tasks.isEmpty()) {
-            return new AssignmentSummary(0, 0);
-        }
-        List<Long> candidateIds = resolveAssignedNurseIds(elderId);
-        if (candidateIds.isEmpty()) {
-            tasks.forEach(task -> task.setAssignedNurseId(null));
-            return new AssignmentSummary(0, tasks.size());
+            return AssignmentSummary.empty();
         }
 
-        Map<Long, User> candidateUserMap = new HashMap<>();
-        userRepository.findAllById(candidateIds).forEach(user -> candidateUserMap.put(user.getUserId(), user));
-        List<Long> availableCandidateIds = candidateIds.stream()
-                .filter(candidateUserMap::containsKey)
-                .toList();
-        if (availableCandidateIds.isEmpty()) {
-            tasks.forEach(task -> task.setAssignedNurseId(null));
-            return new AssignmentSummary(0, tasks.size());
+        Map<Long, BoundCareTeam> careTeamMap = buildBoundCareTeamMap(tasks);
+        Set<Long> candidateIdSet = new LinkedHashSet<>();
+        for (BoundCareTeam careTeam : careTeamMap.values()) {
+            candidateIdSet.addAll(careTeam.allCandidateIds());
         }
 
+        Map<Long, User> candidateUserMap = loadUserMap(candidateIdSet);
         List<LocalDate> scheduledDates = tasks.stream()
                 .map(CarePlanTask::getScheduledDate)
                 .filter(date -> date != null)
                 .distinct()
                 .toList();
-        Map<String, Integer> loadMap = buildDailyTaskLoadMap(availableCandidateIds, scheduledDates, tasks);
-        Map<Long, List<StaffShiftSchedule>> shiftMap = buildShiftMap(availableCandidateIds, scheduledDates);
+        Map<String, Integer> loadMap = buildDailyTaskLoadMap(new ArrayList<>(candidateIdSet), scheduledDates, tasks);
+        Map<Long, List<StaffShiftSchedule>> shiftMap = buildShiftMap(new ArrayList<>(candidateIdSet), scheduledDates);
 
         int assignedCount = 0;
         int unassignedCount = 0;
+        int fallbackAssignedCount = 0;
+        int scheduleMatchedCount = 0;
         for (CarePlanTask task : tasks) {
-            Long assignedId = pickBestAssignee(task, availableCandidateIds, candidateUserMap, shiftMap, loadMap);
-            task.setAssignedNurseId(assignedId);
-            if (assignedId == null) {
+            boolean shouldAssign = mode == AutoAssignMode.REASSIGN_ALL_DRAFTS || task.getAssignedNurseId() == null;
+            if (!shouldAssign) {
+                if (task.getAssignedNurseId() != null) {
+                    assignedCount += 1;
+                    if (task.getScheduledDate() != null) {
+                        String key = buildLoadKey(task.getAssignedNurseId(), task.getScheduledDate());
+                        loadMap.put(key, loadMap.getOrDefault(key, 0) + 1);
+                    }
+                } else {
+                    unassignedCount += 1;
+                }
+                continue;
+            }
+
+            AssignmentDecision decision = pickBestAssignee(task, careTeamMap.get(task.getElderId()), candidateUserMap, shiftMap, loadMap);
+            task.setAssignedNurseId(decision.assignedNurseId());
+            if (decision.assignedNurseId() == null) {
                 unassignedCount += 1;
                 continue;
             }
             assignedCount += 1;
+            if (decision.usedFallback()) {
+                fallbackAssignedCount += 1;
+                log.info("护理任务按绑定关系兜底分配，carePlanId={}, taskId={}, elderId={}, assignedNurseId={}",
+                        carePlanId, task.getTaskId(), task.getElderId(), decision.assignedNurseId());
+            } else {
+                scheduleMatchedCount += 1;
+            }
             if (task.getScheduledDate() != null) {
-                String key = buildLoadKey(assignedId, task.getScheduledDate());
+                String key = buildLoadKey(decision.assignedNurseId(), task.getScheduledDate());
                 loadMap.put(key, loadMap.getOrDefault(key, 0) + 1);
             }
         }
-        return new AssignmentSummary(assignedCount, unassignedCount);
+        return new AssignmentSummary(assignedCount, unassignedCount, fallbackAssignedCount, scheduleMatchedCount);
     }
 
     private Map<String, Integer> buildDailyTaskLoadMap(List<Long> candidateIds,
@@ -721,7 +745,7 @@ public class CarePlanTaskService {
                 .filter(id -> id != null)
                 .collect(java.util.stream.Collectors.toSet());
         List<CarePlanTask> existingTasks = carePlanTaskRepository
-                .findAllByAssignedNurseIdInAndScheduledDateInAndStatusNotIn(candidateIds, scheduledDates, List.of("cancelled"));
+                .findAllByAssignedNurseIdInAndScheduledDateInAndStatusIn(candidateIds, scheduledDates, List.of("draft", "pending"));
         for (CarePlanTask existingTask : existingTasks) {
             if (existingTask.getTaskId() != null && targetTaskIds.contains(existingTask.getTaskId())) {
                 continue;
@@ -748,32 +772,30 @@ public class CarePlanTaskService {
         return shiftMap;
     }
 
-    private Long pickBestAssignee(CarePlanTask task,
-                                  List<Long> candidateIds,
-                                  Map<Long, User> candidateUserMap,
-                                  Map<Long, List<StaffShiftSchedule>> shiftMap,
-                                  Map<String, Integer> loadMap) {
-        List<Long> preferredCandidateIds = filterCandidatesByTaskType(candidateIds, candidateUserMap, task.getTaskType());
-        List<Long> shiftMatchedCandidateIds = filterCandidatesByShift(preferredCandidateIds, task, shiftMap);
-        List<Long> finalCandidates = shiftMatchedCandidateIds.isEmpty() ? preferredCandidateIds : shiftMatchedCandidateIds;
-        if (finalCandidates.isEmpty()) {
-            return null;
+    private AssignmentDecision pickBestAssignee(CarePlanTask task,
+                                                BoundCareTeam careTeam,
+                                                Map<Long, User> candidateUserMap,
+                                                Map<Long, List<StaffShiftSchedule>> shiftMap,
+                                                Map<String, Integer> loadMap) {
+        if (careTeam == null) {
+            return AssignmentDecision.unassigned();
         }
-        return finalCandidates.stream()
-                .min(Comparator
-                        .comparingInt((Long staffId) -> currentDailyTaskLoad(loadMap, staffId, task.getScheduledDate()))
-                        .thenComparingLong(Long::longValue))
-                .orElse(null);
-    }
-
-    private List<Long> filterCandidatesByTaskType(List<Long> candidateIds,
-                                                  Map<Long, User> candidateUserMap,
-                                                  String taskType) {
-        String taskTypeCode = normalizeTaskTypeCode(taskType);
-        List<Long> preferred = candidateIds.stream()
-                .filter(staffId -> roleMatchesTask(taskTypeCode, normalizeRole(candidateUserMap.get(staffId))))
+        List<Long> preferredCandidateIds = careTeam.preferredCandidateIds(normalizeTaskTypeCode(task.getTaskType()));
+        List<Long> availablePreferredCandidateIds = preferredCandidateIds.stream()
+                .filter(candidateUserMap::containsKey)
+                .distinct()
                 .toList();
-        return preferred.isEmpty() ? candidateIds : preferred;
+        if (availablePreferredCandidateIds.isEmpty()) {
+            return AssignmentDecision.unassigned();
+        }
+
+        List<Long> shiftMatchedCandidateIds = filterCandidatesByShift(availablePreferredCandidateIds, task, shiftMap);
+        if (!shiftMatchedCandidateIds.isEmpty()) {
+            return AssignmentDecision.scheduleMatched(selectLeastLoadedCandidate(shiftMatchedCandidateIds, task, loadMap));
+        }
+
+        Long fallbackCandidateId = selectLeastLoadedCandidate(availablePreferredCandidateIds, task, loadMap);
+        return fallbackCandidateId == null ? AssignmentDecision.unassigned() : AssignmentDecision.fallback(fallbackCandidateId);
     }
 
     private List<Long> filterCandidatesByShift(List<Long> candidateIds,
@@ -798,33 +820,17 @@ public class CarePlanTaskService {
             if (scheduledTime == null) {
                 return true;
             }
-            boolean within = !scheduledTime.isBefore(shift.getStartTime()) && !scheduledTime.isAfter(shift.getEndTime());
+            boolean overnight = shift.getStartTime() != null
+                    && shift.getEndTime() != null
+                    && shift.getStartTime().isAfter(shift.getEndTime());
+            boolean within = overnight
+                    ? !scheduledTime.isBefore(shift.getStartTime()) || !scheduledTime.isAfter(shift.getEndTime())
+                    : !scheduledTime.isBefore(shift.getStartTime()) && !scheduledTime.isAfter(shift.getEndTime());
             if (within) {
                 return true;
             }
         }
         return false;
-    }
-
-    private boolean roleMatchesTask(String taskTypeCode, String role) {
-        if (!StringUtils.hasText(role)) {
-            return false;
-        }
-        return switch (taskTypeCode) {
-            case "health_monitoring", "medication_care", "evaluation" -> "nurse".equals(role);
-            case "daily_care", "diet_plan", "diet_care", "safety_precaution", "safety" -> "caregiver".equals(role);
-            case "rehabilitation_activity", "rehabilitation" -> "caregiver".equals(role) || "nurse".equals(role);
-            case "psychological_care", "psychological" -> "caregiver".equals(role) || "nurse".equals(role);
-            default -> "nurse".equals(role) || "caregiver".equals(role);
-        };
-    }
-
-    private String normalizeRole(User user) {
-        return user == null ? "" : normalizeRole(user.getRole());
-    }
-
-    private String normalizeRole(String role) {
-        return safe(role).toLowerCase(Locale.ROOT);
     }
 
     private int currentDailyTaskLoad(Map<String, Integer> loadMap, Long staffId, LocalDate date) {
@@ -836,6 +842,68 @@ public class CarePlanTaskService {
 
     private String buildLoadKey(Long staffId, LocalDate date) {
         return safe(staffId == null ? "" : staffId.toString()) + "|" + safe(date == null ? "" : date.toString());
+    }
+
+    private Long selectLeastLoadedCandidate(List<Long> candidateIds, CarePlanTask task, Map<String, Integer> loadMap) {
+        if (candidateIds == null || candidateIds.isEmpty()) {
+            return null;
+        }
+        return candidateIds.stream()
+                .min(Comparator
+                        .comparingInt((Long staffId) -> currentDailyTaskLoad(loadMap, staffId, task.getScheduledDate()))
+                        .thenComparingLong(Long::longValue))
+                .orElse(null);
+    }
+
+    private Map<Long, BoundCareTeam> buildBoundCareTeamMap(List<CarePlanTask> tasks) {
+        Map<Long, BoundCareTeam> result = new HashMap<>();
+        if (tasks == null || tasks.isEmpty()) {
+            return result;
+        }
+        Set<Long> elderIds = tasks.stream()
+                .map(CarePlanTask::getElderId)
+                .filter(id -> id != null)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        for (Long elderId : elderIds) {
+            result.put(
+                    elderId,
+                    BoundCareTeam.fromAssignments(careTeamAssignmentRepository.findAllByElderIdAndIsActiveOrderByAssignmentIdAsc(elderId, 1))
+            );
+        }
+        return result;
+    }
+
+    private Map<Long, User> loadUserMap(Set<Long> userIds) {
+        Map<Long, User> userMap = new HashMap<>();
+        if (userIds == null || userIds.isEmpty()) {
+            return userMap;
+        }
+        userRepository.findAllById(userIds).forEach(user -> userMap.put(user.getUserId(), user));
+        return userMap;
+    }
+
+    private List<CarePlanTaskDTO> toTaskDtos(List<CarePlanTask> tasks) {
+        if (tasks == null || tasks.isEmpty()) {
+            return List.of();
+        }
+        Set<Long> assignedNurseIds = tasks.stream()
+                .map(CarePlanTask::getAssignedNurseId)
+                .filter(id -> id != null)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<Long, String> assignedNurseNameMap = new HashMap<>();
+        if (!assignedNurseIds.isEmpty()) {
+            userRepository.findAllById(assignedNurseIds).forEach(user ->
+                    assignedNurseNameMap.put(user.getUserId(), firstNonBlank(user.getRealName(), user.getUsername())));
+        }
+        return tasks.stream()
+                .map(task -> toTaskDto(task, assignedNurseNameMap.get(task.getAssignedNurseId())))
+                .toList();
+    }
+
+    private CarePlanTaskDTO toTaskDto(CarePlanTask task, String assignedNurseName) {
+        CarePlanTaskDTO dto = CarePlanTaskDTO.from(task);
+        dto.setAssignedNurseName(assignedNurseName);
+        return dto;
     }
 
     public void createOverdueNotifications() {
@@ -1474,7 +1542,107 @@ public class CarePlanTaskService {
         }
     }
 
-    private record AssignmentSummary(int assignedCount, int unassignedCount) {
+    private enum AutoAssignMode {
+        FILL_UNASSIGNED_ONLY,
+        REASSIGN_ALL_DRAFTS
+    }
+
+    public record AssignmentSummary(int assignedCount,
+                                    int unassignedCount,
+                                    int fallbackAssignedCount,
+                                    int scheduleMatchedCount) {
+        private static AssignmentSummary empty() {
+            return new AssignmentSummary(0, 0, 0, 0);
+        }
+    }
+
+    private record AssignmentDecision(Long assignedNurseId, boolean usedFallback) {
+        private static AssignmentDecision unassigned() {
+            return new AssignmentDecision(null, false);
+        }
+
+        private static AssignmentDecision scheduleMatched(Long assignedNurseId) {
+            return new AssignmentDecision(assignedNurseId, false);
+        }
+
+        private static AssignmentDecision fallback(Long assignedNurseId) {
+            return new AssignmentDecision(assignedNurseId, true);
+        }
+    }
+
+    private static class BoundCareTeam {
+        private final List<Long> nurseIds;
+        private final List<Long> caregiverIds;
+        private final List<Long> staffIds;
+
+        private BoundCareTeam(List<Long> nurseIds, List<Long> caregiverIds, List<Long> staffIds) {
+            this.nurseIds = nurseIds;
+            this.caregiverIds = caregiverIds;
+            this.staffIds = staffIds;
+        }
+
+        private static BoundCareTeam fromAssignments(List<CareTeamAssignment> assignments) {
+            Set<Long> nurseIds = new LinkedHashSet<>();
+            Set<Long> caregiverIds = new LinkedHashSet<>();
+            Set<Long> staffIds = new LinkedHashSet<>();
+            if (assignments != null) {
+                for (CareTeamAssignment assignment : assignments) {
+                    addIfNotNull(nurseIds, assignment.getNurseId());
+                    addIfNotNull(caregiverIds, resolveDynamicStaffId(assignment, "getCaregiverId"));
+                    addIfNotNull(staffIds, resolveDynamicStaffId(assignment, "getStaffId"));
+                }
+            }
+            return new BoundCareTeam(new ArrayList<>(nurseIds), new ArrayList<>(caregiverIds), new ArrayList<>(staffIds));
+        }
+
+        private List<Long> preferredCandidateIds(String taskTypeCode) {
+            List<Long> ordered = new ArrayList<>();
+            switch (taskTypeCode) {
+                case "health_monitoring", "medication_care", "evaluation" -> {
+                    ordered.addAll(nurseIds);
+                    ordered.addAll(caregiverIds);
+                }
+                case "daily_care", "diet_plan", "diet_care", "rehabilitation_activity", "rehabilitation",
+                        "safety_precaution", "safety", "psychological_care", "psychological" -> {
+                    ordered.addAll(caregiverIds);
+                    ordered.addAll(nurseIds);
+                }
+                default -> {
+                    ordered.addAll(caregiverIds);
+                    ordered.addAll(nurseIds);
+                }
+            }
+            if (ordered.isEmpty()) {
+                ordered.addAll(staffIds);
+            }
+            if (ordered.isEmpty()) {
+                ordered.addAll(nurseIds);
+            }
+            return ordered.stream().filter(id -> id != null).distinct().toList();
+        }
+
+        private List<Long> allCandidateIds() {
+            List<Long> all = new ArrayList<>();
+            all.addAll(nurseIds);
+            all.addAll(caregiverIds);
+            all.addAll(staffIds);
+            return all.stream().filter(id -> id != null).distinct().toList();
+        }
+
+        private static void addIfNotNull(Set<Long> ids, Long id) {
+            if (id != null) {
+                ids.add(id);
+            }
+        }
+
+        private static Long resolveDynamicStaffId(CareTeamAssignment assignment, String methodName) {
+            try {
+                Object value = assignment.getClass().getMethod(methodName).invoke(assignment);
+                return value instanceof Long longValue ? longValue : null;
+            } catch (ReflectiveOperationException ex) {
+                return null;
+            }
+        }
     }
 
     public static class TaskGenerationOutcome {

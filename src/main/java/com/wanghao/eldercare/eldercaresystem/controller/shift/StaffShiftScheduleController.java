@@ -51,6 +51,17 @@ public class StaffShiftScheduleController {
         return ApiResponse.ok(staffShiftScheduleService.list(currentUser, staffId, shiftType, status, date, startDate, endDate));
     }
 
+    @GetMapping("/my")
+    public ApiResponse<List<StaffShiftScheduleDTO>> myShifts(@RequestParam(required = false) String view,
+                                                             @RequestParam(required = false) String shiftType,
+                                                             @RequestParam(required = false) String status,
+                                                             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate date,
+                                                             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate startDate,
+                                                             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endDate) {
+        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        return ApiResponse.ok(staffShiftScheduleService.myShifts(currentUser, view, shiftType, status, date, startDate, endDate));
+    }
+
     @GetMapping("/page")
     public ApiResponse<StaffShiftPageResponse> page(@RequestParam(required = false) Long staffId,
                                                     @RequestParam(required = false) String shiftType,

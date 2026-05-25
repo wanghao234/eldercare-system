@@ -20,6 +20,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -154,6 +155,115 @@ class StaffShiftScheduleModuleTests {
                 .andExpect(jsonPath("$.data.conflicts[0].newTimeRange").value("10:00 - 14:00"));
     }
 
+    @Test
+    void batch_create_daily_succeeds_with_multiple_dates() throws Exception {
+        User admin = createUser("admin_shift_schedule_3", "admin", "管理员");
+        User caregiver = createUser("caregiver_shift_schedule_2", "caregiver", "李护理");
+        String token = loginAndGetToken(admin.getUsername(), "123456");
+
+        mockMvc.perform(post("/api/staff-shifts/batch")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "staffId": %d,
+                                  "startDate": "2026-05-25",
+                                  "endDate": "2026-05-31",
+                                  "repeatType": "daily",
+                                  "weekDays": [],
+                                  "shiftType": "morning",
+                                  "startTime": "08:00:00",
+                                  "endTime": "12:00:00"
+                                }
+                                """.formatted(caregiver.getUserId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.createdCount").value(7))
+                .andExpect(jsonPath("$.data.items[0].staffId").value(caregiver.getUserId()))
+                .andExpect(jsonPath("$.data.items[0].shiftType").value("morning"))
+                .andExpect(jsonPath("$.data.items[0].timeRange").value("08:00 - 12:00"))
+                .andExpect(jsonPath("$.data.items[6].shiftDate").value("2026-05-31"));
+    }
+
+    @Test
+    void my_shifts_supports_today_week_range_and_all_views() throws Exception {
+        User admin = createUser("admin_shift_schedule_4", "admin", "管理员");
+        User caregiver = createUser("caregiver_shift_schedule_3", "caregiver", "赵护理");
+        User otherCaregiver = createUser("caregiver_shift_schedule_4", "caregiver", "钱护理");
+        String adminToken = loginAndGetToken(admin.getUsername(), "123456");
+        String caregiverToken = loginAndGetToken(caregiver.getUsername(), "123456");
+
+        createShift(adminToken, caregiver.getUserId(), "2026-05-25", "morning", "08:00:00", "12:00:00");
+        createShift(adminToken, caregiver.getUserId(), "2026-05-27", "afternoon", "14:00:00", "18:00:00");
+        createShift(adminToken, caregiver.getUserId(), "2026-06-02", "morning", "08:00:00", "12:00:00");
+        createShift(adminToken, otherCaregiver.getUserId(), "2026-05-25", "night", "20:00:00", "23:00:00");
+
+        mockMvc.perform(get("/api/staff-shifts/my")
+                        .header("Authorization", "Bearer " + caregiverToken)
+                        .param("view", "today")
+                        .param("date", "2026-05-25"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].staffId").value(caregiver.getUserId()))
+                .andExpect(jsonPath("$.data[0].shiftDate").value("2026-05-25"))
+                .andExpect(jsonPath("$.data[0].shiftType").value("morning"));
+
+        mockMvc.perform(get("/api/staff-shifts/my")
+                        .header("Authorization", "Bearer " + caregiverToken)
+                        .param("view", "week")
+                        .param("date", "2026-05-25"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].shiftDate").value("2026-05-25"))
+                .andExpect(jsonPath("$.data[1].shiftDate").value("2026-05-27"));
+
+        mockMvc.perform(get("/api/staff-shifts/my")
+                        .header("Authorization", "Bearer " + caregiverToken)
+                        .param("view", "range")
+                        .param("startDate", "2026-05-26")
+                        .param("endDate", "2026-06-02"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].shiftDate").value("2026-05-27"))
+                .andExpect(jsonPath("$.data[1].shiftDate").value("2026-06-02"));
+
+        MvcResult allResult = mockMvc.perform(get("/api/staff-shifts/my")
+                        .header("Authorization", "Bearer " + caregiverToken)
+                        .param("view", "all"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(3))
+                .andReturn();
+
+        JsonNode allBody = objectMapper.readTree(allResult.getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertThat(allBody.path("data"))
+                .allMatch(node -> node.path("staffId").asLong() == caregiver.getUserId());
+    }
+
+    @Test
+    void my_shifts_range_requires_valid_dates() throws Exception {
+        User caregiver = createUser("caregiver_shift_schedule_5", "caregiver", "孙护理");
+        String token = loginAndGetToken(caregiver.getUsername(), "123456");
+
+        mockMvc.perform(get("/api/staff-shifts/my")
+                        .header("Authorization", "Bearer " + token)
+                        .param("view", "range")
+                        .param("startDate", "2026-05-30"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("时间范围查询必须提供合法的 startDate 和 endDate"));
+    }
+
+    @Test
+    void my_shifts_forbidden_for_non_shift_roles() throws Exception {
+        User elder = createUser("elder_shift_schedule_1", "elder", "陈长者");
+        String token = loginAndGetToken(elder.getUsername(), "123456");
+
+        mockMvc.perform(get("/api/staff-shifts/my")
+                        .header("Authorization", "Bearer " + token)
+                        .param("view", "all"))
+                .andExpect(status().isForbidden());
+    }
+
     private String loginAndGetToken(String username, String password) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -164,6 +274,27 @@ class StaffShiftScheduleModuleTests {
         String body = result.getResponse().getContentAsString(StandardCharsets.UTF_8);
         JsonNode root = objectMapper.readTree(body);
         return root.path("data").path("token").asText();
+    }
+
+    private void createShift(String token,
+                             Long staffId,
+                             String shiftDate,
+                             String shiftType,
+                             String startTime,
+                             String endTime) throws Exception {
+        mockMvc.perform(post("/api/staff-shifts")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "staffId": %d,
+                                  "shiftDate": "%s",
+                                  "shiftType": "%s",
+                                  "startTime": "%s",
+                                  "endTime": "%s"
+                                }
+                                """.formatted(staffId, shiftDate, shiftType, startTime, endTime)))
+                .andExpect(status().isOk());
     }
 
     private User createUser(String username, String role, String realName) {

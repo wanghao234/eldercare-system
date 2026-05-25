@@ -18,11 +18,18 @@ public interface CarePlanTaskRepository extends JpaRepository<CarePlanTask, Long
 
     List<CarePlanTask> findAllByAssignedNurseIdAndStatusNotInOrderByScheduledAtAscCreatedAtAscTaskIdAsc(Long assignedNurseId, List<String> statuses);
 
+    List<CarePlanTask> findAllByAssignedNurseIdAndStatusInOrderByScheduledAtAscCreatedAtAscTaskIdAsc(Long assignedNurseId,
+                                                                                                       Collection<String> statuses);
+
     List<CarePlanTask> findAllByCarePlanIdAndStatusInOrderByScheduledAtAscCreatedAtAscTaskIdAsc(Long carePlanId, Collection<String> statuses);
 
     List<CarePlanTask> findAllByAssignedNurseIdInAndScheduledDateInAndStatusNotIn(Collection<Long> assignedNurseIds,
                                                                                    Collection<LocalDate> scheduledDates,
                                                                                    Collection<String> excludedStatuses);
+
+    List<CarePlanTask> findAllByAssignedNurseIdInAndScheduledDateInAndStatusIn(Collection<Long> assignedNurseIds,
+                                                                                Collection<LocalDate> scheduledDates,
+                                                                                Collection<String> statuses);
 
     List<CarePlanTask> findAllByStatusIgnoreCaseOrderByScheduledAtAscCreatedAtAscTaskIdAsc(String status);
 }

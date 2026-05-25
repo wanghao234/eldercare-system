@@ -84,6 +84,27 @@ public class StaffShiftScheduleService {
     }
 
     @Transactional(readOnly = true)
+    public List<StaffShiftScheduleDTO> myShifts(CurrentUser currentUser,
+                                                String view,
+                                                String shiftType,
+                                                String status,
+                                                LocalDate date,
+                                                LocalDate startDate,
+                                                LocalDate endDate) {
+        requireShiftViewer(currentUser);
+        QueryWindow window = resolveMyShiftWindow(view, date, startDate, endDate);
+        List<StaffShiftSchedule> rows = staffShiftScheduleRepository.searchAdvanced(
+                currentUser.getUserId(),
+                normalizeShiftTypeFilter(shiftType),
+                normalizeStatusFilter(status),
+                window.date(),
+                window.startDate(),
+                window.endDate()
+        );
+        return mapDtos(rows);
+    }
+
+    @Transactional(readOnly = true)
     public StaffShiftPageResponse page(CurrentUser currentUser,
                                        Long staffId,
                                        String shiftType,
@@ -339,6 +360,41 @@ public class StaffShiftScheduleService {
         }
     }
 
+    private void requireShiftViewer(CurrentUser currentUser) {
+        if (currentUser.hasRole("admin") || currentUser.hasRole("nurse_leader")) {
+            return;
+        }
+        if (!SCHEDULABLE_ROLES.contains(normalizeRole(currentUser.getRole()))) {
+            throw new AccessDeniedException("当前角色无权限查看我的班表");
+        }
+    }
+
+    private QueryWindow resolveMyShiftWindow(String view,
+                                             LocalDate date,
+                                             LocalDate startDate,
+                                             LocalDate endDate) {
+        String normalizedView = trimToNull(view);
+        if (normalizedView == null) {
+            normalizedView = "all";
+        }
+        normalizedView = normalizedView.toLowerCase(Locale.ROOT);
+        return switch (normalizedView) {
+            case "today" -> new QueryWindow(date == null ? LocalDate.now() : date, null, null);
+            case "week" -> {
+                LocalDate anchor = date == null ? LocalDate.now() : date;
+                LocalDate weekStart = anchor.minusDays(anchor.getDayOfWeek().getValue() - DayOfWeek.MONDAY.getValue());
+                LocalDate weekEnd = weekStart.plusDays(6);
+                yield new QueryWindow(null, weekStart, weekEnd);
+            }
+            case "range" -> {
+                validateDateRange(startDate, endDate, "时间范围查询必须提供合法的 startDate 和 endDate");
+                yield new QueryWindow(null, startDate, endDate);
+            }
+            case "all" -> new QueryWindow(null, null, null);
+            default -> throw new BusinessException(ErrorCode.BAD_REQUEST, "view 仅支持 today/week/range/all", HttpStatus.BAD_REQUEST);
+        };
+    }
+
     private ShiftDraft buildDraft(Long staffId,
                                   LocalDate shiftDate,
                                   String shiftType,
@@ -412,7 +468,9 @@ public class StaffShiftScheduleService {
     }
 
     private void assertNoConflicts(User staff, List<ShiftDraft> drafts) {
-        assertNoConflicts(Map.of(staff.getUserId(), staff), drafts);
+        Map<Long, User> userMap = new HashMap<>();
+        userMap.put(staff.getUserId(), staff);
+        assertNoConflicts(userMap, drafts);
     }
 
     private void assertNoConflicts(Map<Long, User> userMap, List<ShiftDraft> drafts) {
@@ -698,5 +756,8 @@ public class StaffShiftScheduleService {
         private ShiftDraft toDraft(LocalDate shiftDate) {
             return new ShiftDraft(staffId, shiftDate, shiftType, startTime, endTime, "active", remark);
         }
+    }
+
+    private record QueryWindow(LocalDate date, LocalDate startDate, LocalDate endDate) {
     }
 }
