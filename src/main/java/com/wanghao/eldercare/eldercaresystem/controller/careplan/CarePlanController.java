@@ -34,10 +34,14 @@ import org.springframework.web.bind.annotation.*;
 public class CarePlanController {
 
     private final CarePlanService carePlanService;
+    private final CarePlanTaskService carePlanTaskService;
     private final CurrentUserUtils currentUserUtils;
 
-    public CarePlanController(CarePlanService carePlanService, CurrentUserUtils currentUserUtils) {
+    public CarePlanController(CarePlanService carePlanService,
+                              CarePlanTaskService carePlanTaskService,
+                              CurrentUserUtils currentUserUtils) {
         this.carePlanService = carePlanService;
+        this.carePlanTaskService = carePlanTaskService;
         this.currentUserUtils = currentUserUtils;
     }
 
@@ -54,6 +58,12 @@ public class CarePlanController {
     public ApiResponse<CarePlanDTO> getCarePlan(@PathVariable Long id) {
         CurrentUser currentUser = currentUserUtils.getCurrentUser();
         return ApiResponse.ok(carePlanService.getCarePlan(currentUser, id));
+    }
+
+    @GetMapping("/care-plans/{carePlanId}/execution-report")
+    public ApiResponse<CarePlanExecutionReportResponse> getExecutionReport(@PathVariable Long carePlanId) {
+        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        return ApiResponse.ok(carePlanTaskService.getExecutionReport(currentUser, carePlanId));
     }
 
     @PostMapping("/care-plans")
@@ -128,5 +138,28 @@ public class CarePlanController {
                                                                 @RequestParam(defaultValue = "7") int days) {
         CurrentUser currentUser = currentUserUtils.getCurrentUser();
         return ApiResponse.ok(carePlanService.regenerateTasks(currentUser, id, days));
+    }
+
+    @PostMapping("/care-plans/{carePlanId}/generate-tasks")
+    @Audited(action = AuditAction.CREATE, entityType = "care_plan_tasks", entityIdArg = "carePlanId")
+    public ApiResponse<GenerateCarePlanTasksResponse> generateCarePlanTasks(@PathVariable Long carePlanId) {
+        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        return ApiResponse.success("护理任务生成成功", carePlanTaskService.generateTasks(currentUser, carePlanId));
+    }
+
+    @PostMapping("/care-plans/{carePlanId}/confirm-tasks")
+    @Audited(action = AuditAction.UPDATE, entityType = "care_plan_tasks", entityIdArg = "carePlanId")
+    public ApiResponse<ConfirmCarePlanTasksResponse> confirmCarePlanTasks(@PathVariable Long carePlanId) {
+        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        ConfirmCarePlanTasksResponse response = carePlanTaskService.confirmTasks(currentUser, carePlanId);
+        return ApiResponse.success(response.getMessage(), response);
+    }
+
+    @PostMapping("/care-plans/{carePlanId}/auto-assign-tasks")
+    @Audited(action = AuditAction.UPDATE, entityType = "care_plan_tasks", entityIdArg = "carePlanId")
+    public ApiResponse<AutoAssignCarePlanTasksResponse> autoAssignCarePlanTasks(@PathVariable Long carePlanId) {
+        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        AutoAssignCarePlanTasksResponse response = carePlanTaskService.autoAssignTasks(currentUser, carePlanId);
+        return ApiResponse.success(response.getMessage(), response);
     }
 }

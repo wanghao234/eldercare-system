@@ -25,6 +25,8 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
 
     Page<Notification> findByToUserIdAndIsRead(Long toUserId, Integer isRead, Pageable pageable);
 
+    boolean existsByToUserIdAndNotifTypeAndBizTypeAndBizId(Long toUserId, String notifType, String bizType, Long bizId);
+
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Transactional
     @Query("update Notification n set n.isRead = 1, n.readAt = :readAt where n.notificationId = :id and n.toUserId = :toUserId and n.isRead = 0")

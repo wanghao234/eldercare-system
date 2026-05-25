@@ -17,6 +17,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import jakarta.persistence.*;
 
@@ -29,7 +30,7 @@ public class Alarm {
     @Column(name = "alarm_id")
     private Long alarmId;
 
-    @Column(name = "elder_id", nullable = false)
+    @Column(name = "elder_id")
     private Long elderId;
 
     @Column(name = "room_id")
@@ -79,6 +80,27 @@ public class Alarm {
 
     @Column(name = "process_instance_id")
     private Long processInstanceId;
+
+    @Column(name = "camera_id")
+    private Long cameraId;
+
+    @Column(name = "confidence", precision = 5, scale = 2)
+    private BigDecimal confidence;
+
+    @Column(name = "snapshot_url", length = 255)
+    private String snapshotUrl;
+
+    @Column(name = "attachments_json")
+    private String attachmentsJson;
+
+    @Column(name = "map_x", precision = 10, scale = 2)
+    private BigDecimal mapX;
+
+    @Column(name = "map_y", precision = 10, scale = 2)
+    private BigDecimal mapY;
+
+    @Column(name = "idempotency_key", length = 100)
+    private String idempotencyKey;
 
     public Long getAlarmId() {
         return alarmId;
@@ -222,5 +244,61 @@ public class Alarm {
 
     public void setProcessInstanceId(Long processInstanceId) {
         this.processInstanceId = processInstanceId;
+    }
+
+    public Long getCameraId() {
+        return cameraId;
+    }
+
+    public void setCameraId(Long cameraId) {
+        this.cameraId = cameraId;
+    }
+
+    public BigDecimal getConfidence() {
+        return confidence;
+    }
+
+    public void setConfidence(BigDecimal confidence) {
+        this.confidence = confidence;
+    }
+
+    public String getSnapshotUrl() {
+        return snapshotUrl;
+    }
+
+    public void setSnapshotUrl(String snapshotUrl) {
+        this.snapshotUrl = snapshotUrl;
+    }
+
+    public String getAttachmentsJson() {
+        return attachmentsJson;
+    }
+
+    public void setAttachmentsJson(String attachmentsJson) {
+        this.attachmentsJson = attachmentsJson;
+    }
+
+    public BigDecimal getMapX() {
+        return mapX;
+    }
+
+    public void setMapX(BigDecimal mapX) {
+        this.mapX = mapX;
+    }
+
+    public BigDecimal getMapY() {
+        return mapY;
+    }
+
+    public void setMapY(BigDecimal mapY) {
+        this.mapY = mapY;
+    }
+
+    public String getIdempotencyKey() {
+        return idempotencyKey;
+    }
+
+    public void setIdempotencyKey(String idempotencyKey) {
+        this.idempotencyKey = idempotencyKey;
     }
 }

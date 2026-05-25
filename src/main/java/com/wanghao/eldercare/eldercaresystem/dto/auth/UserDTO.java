@@ -1,5 +1,6 @@
 package com.wanghao.eldercare.eldercaresystem.dto.auth;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.wanghao.eldercare.eldercaresystem.common.*;
 import com.wanghao.eldercare.eldercaresystem.common.audit.*;
 import com.wanghao.eldercare.eldercaresystem.common.security.*;
@@ -67,6 +68,11 @@ public class UserDTO {
 
     public void setRealName(String realName) {
         this.realName = realName;
+    }
+
+    @JsonProperty("real_name")
+    public String getRealNameSnakeCase() {
+        return realName;
     }
 
     public String getPhone() {

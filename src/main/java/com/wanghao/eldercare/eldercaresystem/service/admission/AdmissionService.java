@@ -1,5 +1,8 @@
 package com.wanghao.eldercare.eldercaresystem.service.admission;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wanghao.eldercare.eldercaresystem.common.*;
 import com.wanghao.eldercare.eldercaresystem.common.BusinessException;
 import com.wanghao.eldercare.eldercaresystem.common.ErrorCode;
@@ -14,14 +17,21 @@ import com.wanghao.eldercare.eldercaresystem.common.security.scope.*;
 import com.wanghao.eldercare.eldercaresystem.common.ws.*;
 import com.wanghao.eldercare.eldercaresystem.controller.admission.*;
 import com.wanghao.eldercare.eldercaresystem.dto.admission.*;
+import com.wanghao.eldercare.eldercaresystem.dto.admission.AdmissionDetailDTO.BedLocationDTO;
+import com.wanghao.eldercare.eldercaresystem.dto.admission.AdmissionDetailDTO.HealthAssessmentDTO;
+import com.wanghao.eldercare.eldercaresystem.dto.admission.AdmissionDetailDTO.NurseDTO;
+import com.wanghao.eldercare.eldercaresystem.dto.admission.AdmissionDetailDTO.ProfileSnapshotDTO;
 import com.wanghao.eldercare.eldercaresystem.entity.admission.*;
 import com.wanghao.eldercare.eldercaresystem.entity.facility.FacilityBed;
+import com.wanghao.eldercare.eldercaresystem.entity.profile.ElderProfileEntity;
 import com.wanghao.eldercare.eldercaresystem.entity.user.User;
 import com.wanghao.eldercare.eldercaresystem.entity.workflow.WfInstance;
 import com.wanghao.eldercare.eldercaresystem.entity.workflow.WfTask;
 import com.wanghao.eldercare.eldercaresystem.entity.workflow.WfTaskAction;
 import com.wanghao.eldercare.eldercaresystem.mapper.admission.*;
+import com.wanghao.eldercare.eldercaresystem.mapper.careteam.CareTeamAssignmentRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.facility.FacilityBedRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.profile.ElderProfileRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.user.UserRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.workflow.WfInstanceRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.workflow.WfTaskActionRepository;
@@ -33,6 +43,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -53,10 +64,16 @@ public class AdmissionService {
     private final AdmissionRecordRepository admissionRecordRepository;
     private final DischargeRecordRepository dischargeRecordRepository;
     private final BedRepository bedRepository;
+    private final RoomRepository roomRepository;
+    private final FloorRepository floorRepository;
+    private final BuildingRepository buildingRepository;
     private final FacilityBedRepository facilityBedRepository;
+    private final CareTeamAssignmentRepository careTeamAssignmentRepository;
+    private final ElderProfileRepository elderProfileRepository;
     private final UserRepository userRepository;
     private final PermissionService permissionService;
     private final JdbcTemplate jdbcTemplate;
+    private final ObjectMapper objectMapper;
     private final WfInstanceRepository wfInstanceRepository;
     private final WfTaskRepository wfTaskRepository;
     private final WfTaskActionRepository wfTaskActionRepository;
@@ -64,20 +81,32 @@ public class AdmissionService {
     public AdmissionService(AdmissionRecordRepository admissionRecordRepository,
                             DischargeRecordRepository dischargeRecordRepository,
                             BedRepository bedRepository,
+                            RoomRepository roomRepository,
+                            FloorRepository floorRepository,
+                            BuildingRepository buildingRepository,
                             FacilityBedRepository facilityBedRepository,
+                            CareTeamAssignmentRepository careTeamAssignmentRepository,
+                            ElderProfileRepository elderProfileRepository,
                             UserRepository userRepository,
                             PermissionService permissionService,
                             JdbcTemplate jdbcTemplate,
+                            ObjectMapper objectMapper,
                             WfInstanceRepository wfInstanceRepository,
                             WfTaskRepository wfTaskRepository,
                             WfTaskActionRepository wfTaskActionRepository) {
         this.admissionRecordRepository = admissionRecordRepository;
         this.dischargeRecordRepository = dischargeRecordRepository;
         this.bedRepository = bedRepository;
+        this.roomRepository = roomRepository;
+        this.floorRepository = floorRepository;
+        this.buildingRepository = buildingRepository;
         this.facilityBedRepository = facilityBedRepository;
+        this.careTeamAssignmentRepository = careTeamAssignmentRepository;
+        this.elderProfileRepository = elderProfileRepository;
         this.userRepository = userRepository;
         this.permissionService = permissionService;
         this.jdbcTemplate = jdbcTemplate;
+        this.objectMapper = objectMapper;
         this.wfInstanceRepository = wfInstanceRepository;
         this.wfTaskRepository = wfTaskRepository;
         this.wfTaskActionRepository = wfTaskActionRepository;
@@ -216,13 +245,160 @@ public class AdmissionService {
     }
 
     @Transactional(readOnly = true)
-    public AdmissionRecord getAdmissionDetail(CurrentUser currentUser, Long id) {
+    public AdmissionDetailDTO getAdmissionDetail(CurrentUser currentUser, Long id) {
         AdmissionRecord record = admissionRecordRepository.findById(id)
                 .orElseThrow(() -> new NotFoundException("入住记录不存在"));
         if (!currentUser.hasRole("doctor")) {
             permissionService.assertCanAccessElder(currentUser, record.getElderId());
         }
-        return record;
+        AdmissionDetailDTO detail = AdmissionDetailDTO.from(record);
+        detail.setNurses(loadNurses(record.getElderId()));
+        detail.setBed(loadBedLocation(record.getBedId()));
+        detail.setHealthAssessment(loadHealthAssessment(record));
+        return detail;
+    }
+
+    private List<NurseDTO> loadNurses(Long elderId) {
+        List<Long> nurseIds = careTeamAssignmentRepository.findActiveNurseIdsByElderId(elderId);
+        if (nurseIds == null || nurseIds.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, User> userMap = new LinkedHashMap<>();
+        userRepository.findAllById(nurseIds).forEach(user -> userMap.put(user.getUserId(), user));
+        List<NurseDTO> nurses = new ArrayList<>();
+        for (Long nurseId : nurseIds) {
+            User user = userMap.get(nurseId);
+            NurseDTO dto = new NurseDTO();
+            dto.setNurseId(nurseId);
+            if (user != null) {
+                dto.setUsername(user.getUsername());
+                dto.setRealName(user.getRealName());
+            }
+            nurses.add(dto);
+        }
+        return nurses;
+    }
+
+    private BedLocationDTO loadBedLocation(Long bedId) {
+        Optional<Bed> bedOptional = bedRepository.findById(bedId);
+        if (bedOptional.isEmpty()) {
+            return null;
+        }
+        Bed bed = bedOptional.get();
+        BedLocationDTO dto = new BedLocationDTO();
+        dto.setBedId(bed.getBedId());
+        dto.setBedNo(bed.getBedNo());
+        dto.setBedStatus(bed.getStatus());
+
+        if (bed.getRoomId() == null) {
+            return dto;
+        }
+        roomRepository.findById(bed.getRoomId()).ifPresent(room -> {
+            dto.setRoomId(room.getRoomId());
+            dto.setRoomNo(room.getRoomNo());
+            if (room.getFloorId() == null) {
+                return;
+            }
+            floorRepository.findById(room.getFloorId()).ifPresent(floor -> {
+                dto.setFloorId(floor.getFloorId());
+                dto.setFloorNo(floor.getFloorNo());
+                if (floor.getBuildingId() == null) {
+                    return;
+                }
+                buildingRepository.findById(floor.getBuildingId()).ifPresent(building -> {
+                    dto.setBuildingId(building.getBuildingId());
+                    dto.setBuildingName(building.getBuildingName());
+                });
+            });
+        });
+        return dto;
+    }
+
+    private HealthAssessmentDTO loadHealthAssessment(AdmissionRecord record) {
+        if (record.getProcessInstanceId() == null) {
+            return profileOnlyHealthAssessment(record.getElderId());
+        }
+        Optional<WfTask> taskOptional = wfTaskRepository.findFirstByInstanceIdAndNodeKeyOrderByCreatedAtDesc(
+                record.getProcessInstanceId(),
+                "health_assess"
+        );
+        if (taskOptional.isEmpty()) {
+            return profileOnlyHealthAssessment(record.getElderId());
+        }
+
+        WfTask task = taskOptional.get();
+        HealthAssessmentDTO dto = new HealthAssessmentDTO();
+        dto.setTaskId(task.getWfTaskId());
+        dto.setStatus(task.getStatus());
+        dto.setCompletedAt(task.getCompletedAt());
+        dto.setComment(task.getComment());
+        dto.setFormData(parseJsonOrNull(task.getFormDataJson()));
+        dto.setProfile(loadProfileSnapshot(record.getElderId()));
+
+        Long assessorId = resolveHealthAssessmentActorId(task);
+        dto.setAssessorId(assessorId);
+        if (assessorId != null) {
+            userRepository.findById(assessorId).ifPresent(user -> {
+                dto.setAssessorUsername(user.getUsername());
+                dto.setAssessorName(user.getRealName());
+            });
+        }
+        return dto;
+    }
+
+    private HealthAssessmentDTO profileOnlyHealthAssessment(Long elderId) {
+        ProfileSnapshotDTO profile = loadProfileSnapshot(elderId);
+        if (profile == null) {
+            return null;
+        }
+        HealthAssessmentDTO dto = new HealthAssessmentDTO();
+        dto.setProfile(profile);
+        return dto;
+    }
+
+    private Long resolveHealthAssessmentActorId(WfTask task) {
+        if (task.getAssigneeId() != null) {
+            return task.getAssigneeId();
+        }
+        List<WfTaskAction> actions = wfTaskActionRepository.findByWfTaskIdOrderByActionTimeAsc(task.getWfTaskId());
+        for (int i = actions.size() - 1; i >= 0; i--) {
+            WfTaskAction action = actions.get(i);
+            if ("complete".equalsIgnoreCase(action.getAction())) {
+                return action.getActorId();
+            }
+        }
+        return null;
+    }
+
+    private ProfileSnapshotDTO loadProfileSnapshot(Long elderId) {
+        Optional<ElderProfileEntity> profileOptional = elderProfileRepository.findById(elderId);
+        if (profileOptional.isEmpty()) {
+            return null;
+        }
+        ElderProfileEntity profile = profileOptional.get();
+        ProfileSnapshotDTO dto = new ProfileSnapshotDTO();
+        dto.setGender(profile.getGender());
+        dto.setBirthday(profile.getBirthday());
+        dto.setAddress(profile.getAddress());
+        dto.setEmergencyContactName(profile.getEmergencyContactName());
+        dto.setEmergencyContactPhone(profile.getEmergencyContactPhone());
+        dto.setAllergies(profile.getAllergies());
+        dto.setChronicConditions(profile.getChronicConditions());
+        dto.setDietTaboo(profile.getDietTaboo());
+        dto.setCareLevel(profile.getCareLevel());
+        dto.setNotes(profile.getNotes());
+        return dto;
+    }
+
+    private JsonNode parseJsonOrNull(String json) {
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readTree(json);
+        } catch (JsonProcessingException ex) {
+            return null;
+        }
     }
 
     @Transactional

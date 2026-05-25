@@ -27,9 +27,14 @@ public interface AdmissionRecordRepository extends JpaRepository<AdmissionRecord
 
     java.util.List<AdmissionRecord> findByElderIdInAndStatusOrderByCreatedAtDescAdmissionIdDesc(java.util.Collection<Long> elderIds,
                                                                                                   String status);
+    java.util.Optional<AdmissionRecord> findFirstByElderIdAndStatusOrderByUpdatedAtDescAdmissionIdDesc(Long elderId,
+                                                                                                        String status);
+    java.util.Optional<AdmissionRecord> findFirstByElderIdAndStatusInOrderByUpdatedAtDescAdmissionIdDesc(Long elderId,
+                                                                                                          java.util.Collection<String> statuses);
 
     boolean existsByElderIdAndEndDateIsNull(Long elderId);
     boolean existsByBedIdAndEndDateIsNull(Long bedId);
+    boolean existsByElderIdAndStatus(Long elderId, String status);
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Transactional

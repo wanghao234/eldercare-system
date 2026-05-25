@@ -54,6 +54,28 @@ public class NotificationService {
         return saved;
     }
 
+    @Transactional
+    public Notification createSystemNotification(Long toUserId,
+                                                 String toUsername,
+                                                 String title,
+                                                 String content,
+                                                 String notifType,
+                                                 String bizType,
+                                                 Long bizId) {
+        Notification n = new Notification();
+        n.setToUserId(toUserId);
+        n.setTitle(title);
+        n.setContent(content);
+        n.setNotifType(notifType);
+        n.setBizType(bizType);
+        n.setBizId(bizId);
+        n.setIsRead(0);
+        n.setCreatedAt(LocalDateTime.now());
+        Notification saved = notificationRepository.save(n);
+        publisher.publishNotificationNew(toUsername, saved);
+        return saved;
+    }
+
     @Transactional(readOnly = true)
     public NotificationListResponse listMy(CurrentUser currentUser, Integer isRead, int page, int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));

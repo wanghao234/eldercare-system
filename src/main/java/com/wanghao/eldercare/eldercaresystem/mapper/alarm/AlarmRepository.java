@@ -22,6 +22,8 @@ import org.springframework.data.repository.query.Param;
 
 public interface AlarmRepository extends JpaRepository<Alarm, Long>, JpaSpecificationExecutor<Alarm> {
 
+    Optional<Alarm> findByIdempotencyKey(String idempotencyKey);
+
     @Query("select a.status from Alarm a where a.alarmId = :alarmId")
     Optional<String> findStatusByAlarmId(@Param("alarmId") Long alarmId);
 

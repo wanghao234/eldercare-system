@@ -55,6 +55,15 @@ public class VitalSignRecord {
     @Column(name = "source")
     private String source;
 
+    @Column(name = "device_type")
+    private String deviceType;
+
+    @Column(name = "device_id")
+    private String deviceId;
+
+    @Column(name = "device_name")
+    private String deviceName;
+
     @Column(name = "recorded_by")
     private Long recordedBy;
 
@@ -84,6 +93,12 @@ public class VitalSignRecord {
     public void setBloodGlucose(Double bloodGlucose) { this.bloodGlucose = bloodGlucose; }
     public String getSource() { return source; }
     public void setSource(String source) { this.source = source; }
+    public String getDeviceType() { return deviceType; }
+    public void setDeviceType(String deviceType) { this.deviceType = deviceType; }
+    public String getDeviceId() { return deviceId; }
+    public void setDeviceId(String deviceId) { this.deviceId = deviceId; }
+    public String getDeviceName() { return deviceName; }
+    public void setDeviceName(String deviceName) { this.deviceName = deviceName; }
     public Long getRecordedBy() { return recordedBy; }
     public void setRecordedBy(Long recordedBy) { this.recordedBy = recordedBy; }
     public String getNote() { return note; }

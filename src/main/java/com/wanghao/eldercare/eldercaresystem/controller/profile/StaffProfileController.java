@@ -53,7 +53,7 @@ public class StaffProfileController {
 
     @PutMapping("/{staffId}")
     @Audited(action = AuditAction.UPDATE, entityType = "staff_profile", entityIdArg = "staffId",
-            requestFields = {"jobTitle", "department", "certificationNo", "hireDate", "skills", "phone", "avatarUrl"})
+            requestFields = {"realName", "jobTitle", "department", "certificationNo", "hireDate", "skills", "phone", "avatarUrl"})
     public ApiResponse<StaffProfileDTO> update(@PathVariable Long staffId,
                                                @Valid @RequestBody StaffProfileUpdateRequest request) {
         CurrentUser currentUser = currentUserUtils.getCurrentUser();

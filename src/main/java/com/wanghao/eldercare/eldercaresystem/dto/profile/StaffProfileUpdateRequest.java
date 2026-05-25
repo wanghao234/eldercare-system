@@ -19,6 +19,9 @@ import java.util.List;
 
 public class StaffProfileUpdateRequest {
 
+    @Size(max = 64, message = "realName 长度不能超过64")
+    private String realName;
+
     @Size(max = 64, message = "jobTitle 长度不能超过64")
     private String jobTitle;
 
@@ -38,6 +41,14 @@ public class StaffProfileUpdateRequest {
 
     @Size(max = 255, message = "avatarUrl 长度不能超过255")
     private String avatarUrl;
+
+    public String getRealName() {
+        return realName;
+    }
+
+    public void setRealName(String realName) {
+        this.realName = realName;
+    }
 
     public String getJobTitle() {
         return jobTitle;

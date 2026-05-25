@@ -238,12 +238,14 @@ class ProfileModuleTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
+                                  "realName":"护士A已修改",
                                   "phone":"13900001111",
                                   "skills":["压疮护理","康复训练"]
                                 }
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.realName").value("护士A已修改"))
                 .andExpect(jsonPath("$.data.phone").value("13900001111"));
     }
 
@@ -312,6 +314,62 @@ class ProfileModuleTests {
                         .header("Authorization", "Bearer " + doctorToken)
                         .param("page", "0")
                         .param("size", "200"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content[0].elderId").value(elder.getUserId()));
+    }
+
+    @Test
+    void nurse_can_list_only_bound_elders_via_bindings_endpoint() throws Exception {
+        User nurse = createUser("nurseBindings1", "nurse");
+        User boundElder = createUser("elderBindings1", "elder");
+        User unboundElder = createUser("elderBindings2", "elder");
+        saveElderProfile(boundElder.getUserId(), "320101199901011234");
+        saveElderProfile(unboundElder.getUserId(), "320101199901011235");
+        bind(boundElder.getUserId(), nurse.getUserId(), null, 1);
+
+        String nurseToken = loginAndGetToken("nurseBindings1", "123456");
+
+        mockMvc.perform(get("/api/profiles/elders/bindings")
+                        .header("Authorization", "Bearer " + nurseToken)
+                        .param("page", "0")
+                        .param("size", "500"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content[0].elderId").value(boundElder.getUserId()))
+                .andExpect(jsonPath("$.data.content[0].username").value("elderBindings1"));
+    }
+
+    @Test
+    void admin_can_access_bindings_endpoint() throws Exception {
+        createUser("adminBindings1", "admin");
+        User elder = createUser("elderBindingsAdmin1", "elder");
+        saveElderProfile(elder.getUserId(), "320101199901011236");
+        String adminToken = loginAndGetToken("adminBindings1", "123456");
+
+        mockMvc.perform(get("/api/profiles/elders/bindings")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("page", "0")
+                        .param("size", "50"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content[0].elderId").value(elder.getUserId()));
+    }
+
+    @Test
+    void doctor_can_access_bindings_endpoint() throws Exception {
+        createUser("doctorBindings1", "doctor");
+        User elder = createUser("elderBindingsDoctor1", "elder");
+        saveElderProfile(elder.getUserId(), "320101199901011237");
+        String doctorToken = loginAndGetToken("doctorBindings1", "123456");
+
+        mockMvc.perform(get("/api/profiles/elders/bindings")
+                        .header("Authorization", "Bearer " + doctorToken)
+                        .param("page", "0")
+                        .param("size", "50"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0"))
                 .andExpect(jsonPath("$.data.totalElements").value(1))

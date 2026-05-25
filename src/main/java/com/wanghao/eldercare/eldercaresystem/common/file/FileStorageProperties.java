@@ -21,7 +21,7 @@ public class FileStorageProperties {
 
     private String storageDir = "uploads";
     private long maxSizeBytes = 10L * 1024 * 1024;
-    private List<String> allowedExtensions = new ArrayList<>(List.of("png", "jpg", "jpeg", "pdf"));
+    private List<String> allowedExtensions = new ArrayList<>(List.of("png", "jpg", "jpeg", "pdf", "docx"));
 
     public String getStorageDir() {
         return storageDir;
@@ -47,4 +47,3 @@ public class FileStorageProperties {
         this.allowedExtensions = allowedExtensions;
     }
 }
-

@@ -33,3 +33,7 @@ file:
     - jpg
     - jpeg
     - pdf
+    - docx
+
+ai:
+  api-key:

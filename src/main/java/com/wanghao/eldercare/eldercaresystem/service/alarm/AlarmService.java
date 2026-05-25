@@ -17,18 +17,27 @@ import com.wanghao.eldercare.eldercaresystem.common.ws.AlarmMessagePublisher;
 import com.wanghao.eldercare.eldercaresystem.controller.alarm.*;
 import com.wanghao.eldercare.eldercaresystem.dto.alarm.*;
 import com.wanghao.eldercare.eldercaresystem.entity.alarm.*;
+import com.wanghao.eldercare.eldercaresystem.entity.admission.Bed;
+import com.wanghao.eldercare.eldercaresystem.entity.facility.CameraDevice;
+import com.wanghao.eldercare.eldercaresystem.entity.user.User;
+import com.wanghao.eldercare.eldercaresystem.mapper.admission.BedRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.admission.RoomRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.alarm.*;
+import com.wanghao.eldercare.eldercaresystem.mapper.facility.CameraDeviceRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.user.UserRepository;
 import com.wanghao.eldercare.eldercaresystem.service.task.TaskIntegrationService;
 import com.wanghao.eldercare.eldercaresystem.service.workflow.WorkflowService;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,36 +50,89 @@ public class AlarmService {
     private final AlarmMessagePublisher alarmMessagePublisher;
     private final WorkflowService workflowService;
     private final TaskIntegrationService taskIntegrationService;
+    private final CameraDeviceRepository cameraDeviceRepository;
+    private final RoomRepository roomRepository;
+    private final BedRepository bedRepository;
+    private final UserRepository userRepository;
 
     public AlarmService(AlarmRepository alarmRepository,
                         AlarmActionLogRepository alarmActionLogRepository,
                         PermissionService permissionService,
                         AlarmMessagePublisher alarmMessagePublisher,
                         WorkflowService workflowService,
-                        TaskIntegrationService taskIntegrationService) {
+                        TaskIntegrationService taskIntegrationService,
+                        CameraDeviceRepository cameraDeviceRepository,
+                        RoomRepository roomRepository,
+                        BedRepository bedRepository,
+                        UserRepository userRepository) {
         this.alarmRepository = alarmRepository;
         this.alarmActionLogRepository = alarmActionLogRepository;
         this.permissionService = permissionService;
         this.alarmMessagePublisher = alarmMessagePublisher;
         this.workflowService = workflowService;
         this.taskIntegrationService = taskIntegrationService;
+        this.cameraDeviceRepository = cameraDeviceRepository;
+        this.roomRepository = roomRepository;
+        this.bedRepository = bedRepository;
+        this.userRepository = userRepository;
     }
 
     @Transactional
     public AlarmCreateResponse createAlarm(CurrentUser currentUser, CreateAlarmRequest request) {
         ensureCanCreateAlarm(currentUser);
-        permissionService.assertCanAccessElder(currentUser, request.getElderId());
+
+        String idempotencyKey = trimToNull(request.getIdempotencyKey());
+        if (idempotencyKey != null) {
+            Optional<Alarm> existing = alarmRepository.findByIdempotencyKey(idempotencyKey);
+            if (existing.isPresent()) {
+                return new AlarmCreateResponse(existing.get().getAlarmId());
+            }
+        }
+
+        CameraDevice cameraDevice = null;
+        if (request.getCameraId() != null) {
+            cameraDevice = cameraDeviceRepository.findById(request.getCameraId())
+                    .orElseThrow(() -> new NotFoundException("摄像头不存在"));
+        }
+
+        Long elderId = request.getElderId();
+        boolean elderIdFromCamera = false;
+        if (elderId == null && cameraDevice != null) {
+            elderId = cameraDevice.getElderId();
+            elderIdFromCamera = elderId != null;
+        }
+        if (elderId != null) {
+            if (elderIdFromCamera) {
+                elderId = resolveCameraBoundElderId(elderId);
+            } else {
+                ensureElderExists(elderId);
+            }
+        }
+        if (elderId != null && !currentUser.hasRole("system")) {
+            permissionService.assertCanAccessElder(currentUser, elderId);
+        }
+
+        Long rawRoomId = firstNonNull(request.getRoomId(), cameraDevice == null ? null : cameraDevice.getRoomId());
+        Long rawBedId = firstNonNull(request.getBedId(), cameraDevice == null ? null : cameraDevice.getBedId());
+        RoomBedRef normalizedRef = normalizeRoomBedRef(rawRoomId, rawBedId);
 
         Alarm alarm = new Alarm();
-        alarm.setElderId(request.getElderId());
-        alarm.setRoomId(request.getRoomId());
-        alarm.setBedId(request.getBedId());
-        alarm.setAlarmType(request.getAlarmType());
-        alarm.setSeverity(request.getSeverity());
-        alarm.setSource(request.getSource());
-        alarm.setLocationText(request.getLocationText());
+        alarm.setElderId(elderId);
+        alarm.setRoomId(normalizedRef.roomId());
+        alarm.setBedId(normalizedRef.bedId());
+        alarm.setAlarmType(defaultIfBlank(request.getAlarmType(), "fall"));
+        alarm.setSeverity(defaultIfBlank(request.getSeverity(), "high"));
+        alarm.setSource(defaultIfBlank(request.getSource(), "manual"));
+        alarm.setLocationText(firstNonBlank(request.getLocationText(), cameraDevice == null ? null : cameraDevice.getLocationText()));
         alarm.setStatus("created");
         alarm.setCreatedAt(LocalDateTime.now());
+        alarm.setCameraId(request.getCameraId());
+        alarm.setConfidence(request.getConfidence());
+        alarm.setSnapshotUrl(trimToNull(request.getSnapshotUrl()));
+        alarm.setAttachmentsJson(trimToNull(request.getAttachmentsJson()));
+        alarm.setMapX(firstNonNull(request.getMapX(), cameraDevice == null ? null : cameraDevice.getMapX()));
+        alarm.setMapY(firstNonNull(request.getMapY(), cameraDevice == null ? null : cameraDevice.getMapY()));
+        alarm.setIdempotencyKey(idempotencyKey);
 
         Alarm saved = alarmRepository.save(alarm);
         Long processInstanceId = workflowService.startAlarmWorkflow(saved.getAlarmId(), currentUser.getUserId());
@@ -79,6 +141,26 @@ public class AlarmService {
         writeActionLog(saved.getAlarmId(), "create", currentUser.getUserId(), request.getNote(), request.getAttachmentsJson());
         alarmMessagePublisher.publishCreated(saved);
         return new AlarmCreateResponse(saved.getAlarmId());
+    }
+
+    @Transactional
+    public AlarmDetailDTO bindAlarmElder(CurrentUser currentUser, Long alarmId, BindAlarmElderRequest request) {
+        Alarm alarm = getAlarmOrThrow(alarmId);
+        if (!isAdminOrLeader(currentUser)) {
+            throw new AccessDeniedException("仅管理员或护士长可绑定老人");
+        }
+        if (request == null || request.getElderId() == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "elderId 不能为空", HttpStatus.BAD_REQUEST);
+        }
+
+        ensureElderExists(request.getElderId());
+        alarm.setElderId(request.getElderId());
+        Alarm saved = alarmRepository.save(alarm);
+        writeActionLog(alarmId, "bind_elder", currentUser.getUserId(), request.getNote(), null);
+        workflowService.appendAlarmAction(alarmId, currentUser.getUserId(), "bind_elder",
+                "报警补充绑定老人，elderId=" + request.getElderId());
+        alarmMessagePublisher.publishUpdated(saved, currentUser.getUsername());
+        return toDetailDTO(saved);
     }
 
     @Transactional(readOnly = true)
@@ -91,7 +173,7 @@ public class AlarmService {
                                         LocalDateTime to,
                                         int page,
                                         int size) {
-        List<Long> visibleElderIds = permissionService.getVisibleElderIds(currentUser);
+        List<Long> visibleElderIds = canViewAllAlarms(currentUser) ? null : permissionService.getVisibleElderIds(currentUser);
         if (visibleElderIds != null && visibleElderIds.isEmpty()) {
             AlarmListResponse empty = new AlarmListResponse();
             empty.setContent(Collections.emptyList());
@@ -139,14 +221,14 @@ public class AlarmService {
     @Transactional(readOnly = true)
     public AlarmDetailDTO getAlarmDetail(CurrentUser currentUser, Long alarmId) {
         Alarm alarm = getAlarmOrThrow(alarmId);
-        permissionService.assertCanAccessElder(currentUser, alarm.getElderId());
+        assertCanAccessAlarm(currentUser, alarm);
         return toDetailDTO(alarm);
     }
 
     @Transactional
     public AlarmDetailDTO acceptAlarm(CurrentUser currentUser, Long alarmId, AlarmActionRequest request) {
         Alarm alarm = getAlarmOrThrow(alarmId);
-        permissionService.assertCanAccessElder(currentUser, alarm.getElderId());
+        assertCanAccessAlarm(currentUser, alarm);
 
         int updated = alarmRepository.acceptIfCreated(alarmId, LocalDateTime.now(), currentUser.getUserId());
         if (updated == 0) {
@@ -167,7 +249,7 @@ public class AlarmService {
     @Transactional
     public AlarmDetailDTO arriveAlarm(CurrentUser currentUser, Long alarmId, AlarmActionRequest request) {
         Alarm alarm = getAlarmOrThrow(alarmId);
-        permissionService.assertCanAccessElder(currentUser, alarm.getElderId());
+        assertCanAccessAlarm(currentUser, alarm);
 
         int updated = alarmRepository.arriveIfAccepted(alarmId, LocalDateTime.now(), currentUser.getUserId());
         if (updated == 0) {
@@ -187,7 +269,7 @@ public class AlarmService {
     @Transactional
     public AlarmDetailDTO closeAlarm(CurrentUser currentUser, Long alarmId, CloseAlarmRequest request) {
         Alarm alarm = getAlarmOrThrow(alarmId);
-        permissionService.assertCanAccessElder(currentUser, alarm.getElderId());
+        assertCanAccessAlarm(currentUser, alarm);
 
         LocalDateTime now = LocalDateTime.now();
         int updated = alarmRepository.closeIfOnSite(alarmId, now, currentUser.getUserId(), request.getCloseReason());
@@ -259,6 +341,47 @@ public class AlarmService {
         throw new BusinessException(ErrorCode.FORBIDDEN, "当前角色不允许创建报警", HttpStatus.FORBIDDEN);
     }
 
+    private void assertCanAccessAlarm(CurrentUser currentUser, Alarm alarm) {
+        if (alarm.getElderId() == null) {
+            if (isAdminOrLeader(currentUser)) {
+                return;
+            }
+            throw new AccessDeniedException("未绑定老人的报警仅管理员或护士长可访问");
+        }
+        permissionService.assertCanAccessElder(currentUser, alarm.getElderId());
+    }
+
+    private void ensureElderExists(Long elderId) {
+        User elder = userRepository.findByUserIdAndDeletedAtIsNull(elderId)
+                .orElseThrow(() -> new NotFoundException("老人不存在"));
+        if (!"elder".equalsIgnoreCase(elder.getRole())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "绑定对象不是老人账号", HttpStatus.BAD_REQUEST);
+        }
+        if (!"active".equalsIgnoreCase(elder.getStatus())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "老人账号未启用", HttpStatus.BAD_REQUEST);
+        }
+    }
+
+    private Long resolveCameraBoundElderId(Long elderId) {
+        return userRepository.findByUserIdAndDeletedAtIsNull(elderId)
+                .filter(user -> "elder".equalsIgnoreCase(user.getRole()))
+                .filter(user -> "active".equalsIgnoreCase(user.getStatus()))
+                .map(User::getUserId)
+                .orElse(null);
+    }
+
+    private boolean isAdminOrLeader(CurrentUser currentUser) {
+        return currentUser.hasRole("admin") || currentUser.hasRole("nurse_leader");
+    }
+
+    private boolean canViewAllAlarms(CurrentUser currentUser) {
+        return currentUser.hasRole("admin")
+                || currentUser.hasRole("nurse_leader")
+                || currentUser.hasRole("nurse")
+                || currentUser.hasRole("caregiver")
+                || currentUser.hasRole("doctor");
+    }
+
     private void throwStateTransitionError(String action, String currentStatus) {
         String message;
         if ("accept".equals(action)) {
@@ -269,5 +392,56 @@ public class AlarmService {
             message = "关闭失败：仅允许 on_site/handling -> closed，当前状态=" + currentStatus;
         }
         throw new BusinessException(ErrorCode.BAD_REQUEST, message, HttpStatus.BAD_REQUEST);
+    }
+
+    private String defaultIfBlank(String value, String defaultValue) {
+        return value == null || value.isBlank() ? defaultValue : value;
+    }
+
+    private String firstNonBlank(String preferred, String fallback) {
+        return preferred == null || preferred.isBlank() ? trimToNull(fallback) : preferred;
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private <T> T firstNonNull(T preferred, T fallback) {
+        return preferred != null ? preferred : fallback;
+    }
+
+    private RoomBedRef normalizeRoomBedRef(Long roomId, Long bedId) {
+        Long normalizedRoomId = roomId;
+        Long normalizedBedId = bedId;
+
+        if (normalizedBedId != null) {
+            Optional<Bed> bedOpt = bedRepository.findById(normalizedBedId);
+            if (bedOpt.isPresent()) {
+                Bed bed = bedOpt.get();
+                if (normalizedRoomId == null || !roomRepository.existsById(normalizedRoomId)
+                        || !normalizedRoomId.equals(bed.getRoomId())) {
+                    normalizedRoomId = bed.getRoomId();
+                }
+            } else {
+                normalizedBedId = null;
+            }
+        }
+
+        if (normalizedRoomId != null && !roomRepository.existsById(normalizedRoomId)) {
+            normalizedRoomId = null;
+        }
+
+        if (normalizedBedId != null && normalizedRoomId == null) {
+            normalizedBedId = null;
+        }
+
+        return new RoomBedRef(normalizedRoomId, normalizedBedId);
+    }
+
+    private record RoomBedRef(Long roomId, Long bedId) {
     }
 }

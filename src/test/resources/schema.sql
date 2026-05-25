@@ -1,3 +1,5 @@
+DROP TABLE IF EXISTS care_plan_tasks;
+DROP TABLE IF EXISTS staff_shift_schedule;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS elder_profile;
 DROP TABLE IF EXISTS staff_profile;
@@ -7,6 +9,7 @@ DROP TABLE IF EXISTS permissions;
 DROP TABLE IF EXISTS roles;
 DROP TABLE IF EXISTS care_team_assignment;
 DROP TABLE IF EXISTS alarm_action_logs;
+DROP TABLE IF EXISTS digital_twin_map;
 DROP TABLE IF EXISTS tasks;
 DROP TABLE IF EXISTS notifications;
 DROP TABLE IF EXISTS messages;
@@ -137,7 +140,7 @@ CREATE TABLE care_team_assignment (
 
 CREATE TABLE alarms (
   alarm_id BIGINT PRIMARY KEY AUTO_INCREMENT,
-  elder_id BIGINT NOT NULL,
+  elder_id BIGINT,
   room_id BIGINT,
   bed_id BIGINT,
   alarm_type VARCHAR(64) NOT NULL,
@@ -153,7 +156,15 @@ CREATE TABLE alarms (
   closed_at DATETIME,
   closed_by BIGINT,
   close_reason VARCHAR(500),
-  process_instance_id VARCHAR(128)
+  process_instance_id VARCHAR(128),
+  camera_id BIGINT,
+  confidence DECIMAL(5,2),
+  snapshot_url VARCHAR(255),
+  attachments_json TEXT,
+  map_x DECIMAL(10,2),
+  map_y DECIMAL(10,2),
+  idempotency_key VARCHAR(100),
+  CONSTRAINT uk_alarm_idempotency_key UNIQUE (idempotency_key)
 );
 
 CREATE TABLE alarm_action_logs (
@@ -164,6 +175,39 @@ CREATE TABLE alarm_action_logs (
   action_time DATETIME NOT NULL,
   note VARCHAR(500),
   attachments_json TEXT
+);
+
+CREATE TABLE camera_device (
+  camera_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  camera_name VARCHAR(100) NOT NULL,
+  camera_code VARCHAR(100) UNIQUE,
+  camera_type VARCHAR(50) DEFAULT 'webcam',
+  stream_url VARCHAR(500),
+  elder_id BIGINT,
+  room_id BIGINT,
+  bed_id BIGINT,
+  location_text VARCHAR(255),
+  map_x DECIMAL(10,2),
+  map_y DECIMAL(10,2),
+  status VARCHAR(20) DEFAULT 'online',
+  remark VARCHAR(255),
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE digital_twin_map (
+  map_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  map_name VARCHAR(100) NOT NULL,
+  building_id BIGINT,
+  floor_id BIGINT,
+  building_name VARCHAR(100),
+  floor_no INT,
+  map_image VARCHAR(255) NOT NULL,
+  width INT NOT NULL,
+  height INT NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'enabled',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE wf_definitions (
@@ -268,6 +312,19 @@ CREATE TABLE shifts (
   CONSTRAINT uk_shift_date_type UNIQUE (shift_date, shift_type)
 );
 
+CREATE TABLE staff_shift_schedule (
+  shift_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  staff_id BIGINT NOT NULL,
+  shift_date DATE NOT NULL,
+  shift_type VARCHAR(32) NOT NULL,
+  start_time TIME NOT NULL,
+  end_time TIME NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  remark VARCHAR(255),
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE handover_notes (
   note_id BIGINT PRIMARY KEY AUTO_INCREMENT,
   shift_id BIGINT NOT NULL,
@@ -292,10 +349,24 @@ CREATE TABLE care_plans (
   status VARCHAR(16) NOT NULL DEFAULT 'active',
   start_date DATE,
   end_date DATE,
+  care_level VARCHAR(32),
   care_time VARCHAR(64),
   care_content TEXT,
   medication_reminder TEXT,
   diet_plan TEXT,
+  health_assessment TEXT,
+  nursing_problem TEXT,
+  risk_tags VARCHAR(255),
+  nursing_goal TEXT,
+  daily_care TEXT,
+  medication_care TEXT,
+  health_monitoring TEXT,
+  rehabilitation_activity TEXT,
+  psychological_care TEXT,
+  safety_precaution TEXT,
+  execution_frequency VARCHAR(128),
+  evaluation TEXT,
+  ai_generated TINYINT NOT NULL DEFAULT 0,
   created_by BIGINT,
   approved_by BIGINT,
   approved_at DATETIME,
@@ -320,6 +391,28 @@ CREATE TABLE care_plan_change_requests (
   review_comment VARCHAR(255),
   created_at DATETIME,
   updated_at DATETIME
+);
+
+CREATE TABLE care_plan_tasks (
+  task_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  care_plan_id BIGINT NOT NULL,
+  elder_id BIGINT NOT NULL,
+  assigned_nurse_id BIGINT,
+  task_type VARCHAR(64),
+  task_title VARCHAR(128) NOT NULL,
+  task_content TEXT,
+  frequency_desc VARCHAR(128),
+  suggested_time VARCHAR(128),
+  scheduled_date DATE,
+  scheduled_time TIME,
+  scheduled_at DATETIME,
+  task_source VARCHAR(32) DEFAULT 'care_plan',
+  task_group_key VARCHAR(64),
+  status VARCHAR(32) NOT NULL DEFAULT 'pending',
+  execution_result TEXT,
+  executed_at DATETIME,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL
 );
 
 CREATE TABLE tasks (
@@ -487,6 +580,7 @@ CREATE TABLE medication_plans (
   dosage VARCHAR(128) NOT NULL,
   frequency VARCHAR(64) NOT NULL,
   times_json TEXT NOT NULL,
+  medications_json TEXT NOT NULL,
   start_date DATE NOT NULL,
   end_date DATE,
   status VARCHAR(32) NOT NULL,
@@ -566,6 +660,9 @@ CREATE TABLE vital_sign_records (
   temperature DECIMAL(5,2),
   blood_glucose DECIMAL(10,2),
   source VARCHAR(32),
+  device_type VARCHAR(32),
+  device_id VARCHAR(128),
+  device_name VARCHAR(128),
   recorded_by BIGINT,
   note VARCHAR(500),
   created_at DATETIME
@@ -650,6 +747,7 @@ CREATE TABLE admission_records (
   bed_id BIGINT NOT NULL,
   contract_no VARCHAR(64),
   package_name VARCHAR(128),
+  contract_file_url VARCHAR(255),
   deposit_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
   start_date DATE NOT NULL,
   end_date DATE,

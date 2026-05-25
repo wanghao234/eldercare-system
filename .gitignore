@@ -1,33 +1,207 @@
+# =========================
+# Help
+# =========================
 HELP.md
+
+
+# =========================
+# Java / Spring Boot build output
+# =========================
 target/
-.mvn/wrapper/maven-wrapper.jar
+*.class
+*.jar
+*.war
+*.ear
+
+# 保留源码目录下可能存在的 target 目录
 !**/src/main/**/target/
 !**/src/test/**/target/
 
-### STS ###
+
+# =========================
+# Maven
+# =========================
+.mvn/wrapper/maven-wrapper.jar
+
+# Maven 本地临时文件
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.properties.tmp
+
+
+# =========================
+# Gradle
+# =========================
+.gradle/
+build/
+
+# 保留源码目录下可能存在的 build 目录
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+
+# =========================
+# Logs 日志文件
+# =========================
+logs/
+log/
+*.log
+*.log.*
+spring.log
+
+
+# =========================
+# Runtime / temporary files
+# =========================
+tmp/
+temp/
+*.tmp
+*.temp
+*.pid
+*.seed
+*.pid.lock
+
+
+# =========================
+# Environment files 环境变量文件
+# =========================
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+*.env
+
+
+# =========================
+# Spring Boot local config
+# =========================
+application-local.yml
+application-local.yaml
+application-local.properties
+
+application-dev.yml
+application-dev.yaml
+application-dev.properties
+
+application-prod.yml
+application-prod.yaml
+application-prod.properties
+
+application-test.yml
+application-test.yaml
+application-test.properties
+
+# 示例配置文件允许提交
+!application-example.yml
+!application-example.yaml
+!application-example.properties
+
+
+# =========================
+# Sensitive files 敏感文件
+# =========================
+*.key
+*.pem
+*.p12
+*.jks
+*.keystore
+*.crt
+*.cer
+
+# 数据库备份文件
+*.sql
+*.dump
+*.bak
+
+
+# =========================
+# Upload files 上传文件
+# =========================
+uploads/
+upload/
+files/
+file-storage/
+static/uploads/
+
+
+# =========================
+# STS / Eclipse
+# =========================
 .apt_generated
+.apt_generated_test
 .classpath
 .factorypath
 .project
-.settings
+.settings/
 .springBeans
-.sts4-cache
+.sts4-cache/
 
-### IntelliJ IDEA ###
-.idea
+
+# =========================
+# IntelliJ IDEA
+# =========================
+.idea/
 *.iws
 *.iml
 *.ipr
+out/
 
-### NetBeans ###
+
+# =========================
+# NetBeans
+# =========================
 /nbproject/private/
 /nbbuild/
 /dist/
 /nbdist/
 /.nb-gradle/
-build/
-!**/src/main/**/build/
-!**/src/test/**/build/
 
-### VS Code ###
+
+# =========================
+# VS Code
+# =========================
 .vscode/
+
+
+# =========================
+# macOS
+# =========================
+.DS_Store
+.AppleDouble
+.LSOverride
+
+
+# =========================
+# Windows
+# =========================
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+
+# =========================
+# Linux
+# =========================
+*~
+
+
+# =========================
+# Docker local override
+# =========================
+docker-compose.override.yml
+docker-compose.local.yml
+
+
+# =========================
+# Node files if backend contains frontend tools
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+# Project database scripts
+!src/main/resources/db/
+!src/main/resources/db/**/*.sql
+src/main/resources/application.yml

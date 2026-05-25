@@ -18,15 +18,18 @@ import com.wanghao.eldercare.eldercaresystem.common.security.scope.*;
 import com.wanghao.eldercare.eldercaresystem.common.ws.*;
 import com.wanghao.eldercare.eldercaresystem.controller.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.dto.careteam.CareTeamAssignmentDTO;
+import com.wanghao.eldercare.eldercaresystem.dto.workflow.ImportAdmissionContractResponse;
 import com.wanghao.eldercare.eldercaresystem.dto.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.entity.admission.AdmissionRecord;
 import com.wanghao.eldercare.eldercaresystem.entity.admission.Bed;
 import com.wanghao.eldercare.eldercaresystem.entity.profile.ElderProfileEntity;
+import com.wanghao.eldercare.eldercaresystem.entity.user.User;
 import com.wanghao.eldercare.eldercaresystem.entity.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.mapper.admission.AdmissionRecordRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.admission.BedRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.careteam.CareTeamAssignmentRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.profile.ElderProfileRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.user.UserRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.service.careteam.CareTeamAssignmentService;
 import java.math.BigDecimal;
@@ -60,7 +63,10 @@ public class AdmissionWorkflowOrchestrator {
     private final CareTeamAssignmentRepository careTeamAssignmentRepository;
     private final CareTeamAssignmentService careTeamAssignmentService;
     private final ElderProfileRepository elderProfileRepository;
+    private final UserRepository userRepository;
     private final ObjectMapper objectMapper;
+    private final AdmissionContractTemplateService admissionContractTemplateService;
+    private final AdmissionContractImportService admissionContractImportService;
 
     public AdmissionWorkflowOrchestrator(WfTaskRepository wfTaskRepository,
                                          WfTaskActionRepository wfTaskActionRepository,
@@ -70,7 +76,10 @@ public class AdmissionWorkflowOrchestrator {
                                          CareTeamAssignmentRepository careTeamAssignmentRepository,
                                          CareTeamAssignmentService careTeamAssignmentService,
                                          ElderProfileRepository elderProfileRepository,
-                                         ObjectMapper objectMapper) {
+                                         UserRepository userRepository,
+                                         ObjectMapper objectMapper,
+                                         AdmissionContractTemplateService admissionContractTemplateService,
+                                         AdmissionContractImportService admissionContractImportService) {
         this.wfTaskRepository = wfTaskRepository;
         this.wfTaskActionRepository = wfTaskActionRepository;
         this.wfInstanceRepository = wfInstanceRepository;
@@ -79,7 +88,10 @@ public class AdmissionWorkflowOrchestrator {
         this.careTeamAssignmentRepository = careTeamAssignmentRepository;
         this.careTeamAssignmentService = careTeamAssignmentService;
         this.elderProfileRepository = elderProfileRepository;
+        this.userRepository = userRepository;
         this.objectMapper = objectMapper;
+        this.admissionContractTemplateService = admissionContractTemplateService;
+        this.admissionContractImportService = admissionContractImportService;
     }
 
     @Transactional
@@ -131,6 +143,59 @@ public class AdmissionWorkflowOrchestrator {
         );
 
         return enrichTask(completedTask);
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] downloadContractTemplate(CurrentUser currentUser,
+                                           CompleteWfTaskRequest request,
+                                           WfTask task,
+                                           WfInstance instance) {
+        ensureAdmissionInstanceReadable(instance);
+        ensureCanComplete(currentUser, task, instance);
+        if (!"contract_deposit_confirm".equalsIgnoreCase(task.getNodeKey())) {
+            throw badRequest("当前任务不支持下载合同模板");
+        }
+        AdmissionRecord admission = admissionRecordRepository.findById(instance.getBizId())
+                .orElseThrow(() -> new NotFoundException("入住记录不存在"));
+        JsonNode formData = resolveFormData(request);
+        User operator = currentUser == null ? null
+                : userRepository.findByUserIdAndDeletedAtIsNull(currentUser.getUserId()).orElse(null);
+        String operatorName = operator == null ? (currentUser == null ? null : currentUser.getUsername()) : operator.getRealName();
+        String operatorPhone = operator == null ? null : operator.getPhone();
+        return admissionContractTemplateService.generate(admission, formData, operatorName, operatorPhone);
+    }
+
+    @Transactional(readOnly = true)
+    public String buildContractTemplateFileName(WfInstance instance) {
+        AdmissionRecord admission = admissionRecordRepository.findById(instance.getBizId())
+                .orElseThrow(() -> new NotFoundException("入住记录不存在"));
+        return admissionContractTemplateService.buildDownloadFileName(admission);
+    }
+
+    @Transactional
+    public ImportAdmissionContractResponse importContract(CurrentUser currentUser,
+                                                          org.springframework.web.multipart.MultipartFile file,
+                                                          WfTask task,
+                                                          WfInstance instance) {
+        ensureAdmissionInstance(instance);
+        ensureCanComplete(currentUser, task, instance);
+        if (!"contract_deposit_confirm".equalsIgnoreCase(task.getNodeKey())) {
+            throw badRequest("当前任务不支持导入合同");
+        }
+        AdmissionRecord admission = admissionRecordRepository.findById(instance.getBizId())
+                .orElseThrow(() -> new NotFoundException("入住记录不存在"));
+        return admissionContractImportService.importContract(file, admission);
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] downloadImportedContract(CurrentUser currentUser,
+                                           WfTask task,
+                                           WfInstance instance) {
+        ensureAdmissionInstanceReadable(instance);
+        ensureCanComplete(currentUser, task, instance);
+        AdmissionRecord admission = admissionRecordRepository.findById(instance.getBizId())
+                .orElseThrow(() -> new NotFoundException("入住记录不存在"));
+        return admissionContractImportService.loadContractFileBytes(admission);
     }
 
     private WfTask onAssignNurse(AdmissionRecord admission,
@@ -285,6 +350,17 @@ public class AdmissionWorkflowOrchestrator {
             throw badRequest("当前任务不属于 admission 流程");
         }
         if (!"running".equalsIgnoreCase(instance.getStatus())) {
+            throw badRequest("流程实例状态不匹配，当前状态=" + instance.getStatus());
+        }
+    }
+
+    private void ensureAdmissionInstanceReadable(WfInstance instance) {
+        if (!"admission".equalsIgnoreCase(instance.getProcessKey())
+                || !"admission".equalsIgnoreCase(instance.getBizType())) {
+            throw badRequest("当前任务不属于 admission 流程");
+        }
+        String status = instance.getStatus() == null ? "" : instance.getStatus().toLowerCase(Locale.ROOT);
+        if (!"running".equals(status) && !"completed".equals(status)) {
             throw badRequest("流程实例状态不匹配，当前状态=" + instance.getStatus());
         }
     }

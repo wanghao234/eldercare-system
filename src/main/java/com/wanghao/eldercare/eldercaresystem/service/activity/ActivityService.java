@@ -16,9 +16,16 @@ import com.wanghao.eldercare.eldercaresystem.controller.activity.*;
 import com.wanghao.eldercare.eldercaresystem.dto.activity.*;
 import com.wanghao.eldercare.eldercaresystem.entity.activity.*;
 import com.wanghao.eldercare.eldercaresystem.mapper.activity.*;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.List;
 import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -33,6 +40,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class ActivityService {
 
     private static final Set<String> PARTICIPANT_STATUSES = Set.of("signed", "checked_in", "cancelled");
+    private static final DateTimeFormatter AI_ACTIVITY_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final ActivityRepository activityRepository;
     private final ActivityParticipantRepository activityParticipantRepository;
@@ -71,6 +79,23 @@ public class ActivityService {
         activity.setCreatedBy(currentUser.getUserId());
         activity.setCreatedAt(LocalDateTime.now());
         return ActivityDTO.from(activityRepository.save(activity));
+    }
+
+    @Transactional
+    public int confirmBatchActivities(Integer operatorId, String operatorRole, List<AiActivityFormVO> activityForms) {
+        CurrentUser currentUser = new CurrentUser(operatorId.longValue(), "ai_voice", operatorRole);
+        for (int i = 0; i < activityForms.size(); i++) {
+            AiActivityFormVO form = activityForms.get(i);
+            validateAiActivityForm(form, i);
+
+            ActivityUpsertRequest request = new ActivityUpsertRequest();
+            request.setTitle(form.getActivityName().trim());
+            request.setActivityTime(parseAiActivityTime(form.getActivityTime().trim(), i));
+            request.setLocation(trimToNull(form.getActivityLocation()));
+            request.setDescription(trimToNull(form.getActivityDescription()));
+            createActivity(currentUser, request);
+        }
+        return activityForms.size();
     }
 
     @Transactional
@@ -113,6 +138,38 @@ public class ActivityService {
     }
 
     @Transactional
+    public ActivityBatchSignupResponse signupBatch(CurrentUser currentUser, Long activityId, List<Long> elderIds) {
+        getActivityOrThrow(activityId);
+
+        List<Long> effectiveElderIds = resolveBatchElderIds(currentUser, elderIds);
+        ActivityBatchSignupResponse response = new ActivityBatchSignupResponse();
+        List<ActivityBatchSignupResponse.ActivityBatchSignupResultItem> items = new ArrayList<>();
+
+        int successCount = 0;
+        int failCount = 0;
+        for (Long elderId : effectiveElderIds) {
+            ActivityBatchSignupResponse.ActivityBatchSignupResultItem item = new ActivityBatchSignupResponse.ActivityBatchSignupResultItem();
+            item.setElderId(elderId);
+            try {
+                ActivityParticipantDTO participant = signup(currentUser, activityId, elderId);
+                item.setSuccess(true);
+                item.setMessage("报名成功");
+                item.setParticipant(participant);
+                successCount++;
+            } catch (Exception ex) {
+                item.setSuccess(false);
+                item.setMessage(ex.getMessage());
+                failCount++;
+            }
+            items.add(item);
+        }
+        response.setSuccessCount(successCount);
+        response.setFailCount(failCount);
+        response.setItems(items);
+        return response;
+    }
+
+    @Transactional
     public ActivityParticipantDTO checkIn(CurrentUser currentUser, Long activityId, Long elderId) {
         getActivityOrThrow(activityId);
         permissionService.assertCanAccessElder(currentUser, elderId);
@@ -151,6 +208,24 @@ public class ActivityService {
         return toPage(dtoPage, page, size);
     }
 
+    @Transactional(readOnly = true)
+    public ActivityParticipantStatsResponse participantStats(Long activityId) {
+        getActivityOrThrow(activityId);
+
+        long signedCount = activityParticipantRepository.countByActivityIdAndStatus(activityId, "signed");
+        long checkedInCount = activityParticipantRepository.countByActivityIdAndStatus(activityId, "checked_in");
+        long cancelledCount = activityParticipantRepository.countByActivityIdAndStatus(activityId, "cancelled");
+        long totalCount = activityParticipantRepository.countByActivityId(activityId);
+
+        ActivityParticipantStatsResponse response = new ActivityParticipantStatsResponse();
+        response.setSignedCount(signedCount);
+        response.setCheckedInCount(checkedInCount);
+        response.setCancelledCount(cancelledCount);
+        response.setTotalCount(totalCount);
+        response.setParticipantCount(signedCount + checkedInCount);
+        return response;
+    }
+
     private Activity getActivityOrThrow(Long activityId) {
         return activityRepository.findById(activityId)
                 .orElseThrow(() -> new NotFoundException("活动不存在"));
@@ -159,6 +234,31 @@ public class ActivityService {
     private ActivityParticipant getParticipantOrThrow(Long activityId, Long elderId) {
         return activityParticipantRepository.findByActivityIdAndElderId(activityId, elderId)
                 .orElseThrow(() -> new NotFoundException("报名记录不存在"));
+    }
+
+    private List<Long> resolveBatchElderIds(CurrentUser currentUser, List<Long> elderIds) {
+        List<Long> normalized = normalizeElderIds(elderIds);
+        if (!normalized.isEmpty()) {
+            return normalized;
+        }
+
+        List<Long> visibleElderIds = permissionService.getVisibleElderIds(currentUser);
+        if (visibleElderIds == null) {
+            throw badRequest("elderIds 不能为空");
+        }
+        if (visibleElderIds.isEmpty()) {
+            throw badRequest("当前账号未绑定任何老人");
+        }
+        return visibleElderIds;
+    }
+
+    private List<Long> normalizeElderIds(List<Long> elderIds) {
+        if (elderIds == null || elderIds.isEmpty()) {
+            return List.of();
+        }
+        return new ArrayList<>(elderIds.stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new)));
     }
 
     private void applyUpsert(Activity activity, ActivityUpsertRequest request) {
@@ -184,6 +284,27 @@ public class ActivityService {
         return normalized;
     }
 
+    private void validateAiActivityForm(AiActivityFormVO form, int index) {
+        int rowNumber = index + 1;
+        if (form == null) {
+            throw badRequest("第" + rowNumber + "条活动数据不能为空");
+        }
+        if (form.getActivityName() == null || form.getActivityName().isBlank()) {
+            throw badRequest("第" + rowNumber + "条活动名称不能为空");
+        }
+        if (form.getActivityTime() == null || form.getActivityTime().isBlank()) {
+            throw badRequest("第" + rowNumber + "条活动时间不能为空");
+        }
+    }
+
+    private LocalDateTime parseAiActivityTime(String value, int index) {
+        try {
+            return LocalDateTime.parse(value, AI_ACTIVITY_TIME_FORMATTER);
+        } catch (DateTimeParseException ex) {
+            throw badRequest("第" + (index + 1) + "条活动时间格式错误，要求 yyyy-MM-dd HH:mm:ss");
+        }
+    }
+
     private <T> ActivityPageResponse<T> toPage(Page<T> pageData, int page, int size) {
         ActivityPageResponse<T> response = new ActivityPageResponse<>();
         response.setItems(pageData.getContent());
@@ -197,4 +318,3 @@ public class ActivityService {
         return new BusinessException(ErrorCode.BAD_REQUEST, message, HttpStatus.BAD_REQUEST);
     }
 }
-

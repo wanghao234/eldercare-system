@@ -13,7 +13,9 @@ import com.wanghao.eldercare.eldercaresystem.controller.careplan.*;
 import com.wanghao.eldercare.eldercaresystem.dto.careplan.*;
 import com.wanghao.eldercare.eldercaresystem.entity.careplan.*;
 import com.wanghao.eldercare.eldercaresystem.entity.careteam.CareTeamAssignment;
+import com.wanghao.eldercare.eldercaresystem.entity.admission.AdmissionRecord;
 import com.wanghao.eldercare.eldercaresystem.entity.user.User;
+import com.wanghao.eldercare.eldercaresystem.mapper.admission.AdmissionRecordRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.careplan.*;
 import com.wanghao.eldercare.eldercaresystem.mapper.careteam.CareTeamAssignmentRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.user.UserRepository;
@@ -72,11 +74,15 @@ class CarePlanModuleTests {
     @Autowired
     private CareTeamAssignmentRepository careTeamAssignmentRepository;
 
+    @Autowired
+    private AdmissionRecordRepository admissionRecordRepository;
+
     @BeforeEach
     void setUp() {
         taskRepository.deleteAll();
         carePlanChangeRepository.deleteAll();
         carePlanRepository.deleteAll();
+        admissionRecordRepository.deleteAll();
         careTeamAssignmentRepository.deleteAll();
         userRepository.deleteAll();
     }
@@ -87,6 +93,7 @@ class CarePlanModuleTests {
         User nurse = createUser("nurse1", "nurse");
         createUser("leader1", "nurse_leader");
         bindNurse(elder.getUserId(), nurse.getUserId());
+        createActiveAdmission(elder.getUserId(), nurse.getUserId());
 
         CarePlan oldPlan = new CarePlan();
         oldPlan.setElderId(elder.getUserId());
@@ -153,6 +160,7 @@ class CarePlanModuleTests {
         createUser("leaderSpecial", "nurse_leader");
         createUser("doctorSpecial", "doctor");
         bindNurse(elder.getUserId(), nurse.getUserId());
+        createActiveAdmission(elder.getUserId(), nurse.getUserId());
 
         CarePlan oldPlan = new CarePlan();
         oldPlan.setElderId(elder.getUserId());
@@ -227,6 +235,7 @@ class CarePlanModuleTests {
         User nurse = createUser("nurse2", "nurse");
         createUser("adminCP2", "admin");
         bindNurse(elder.getUserId(), nurse.getUserId());
+        createActiveAdmission(elder.getUserId(), nurse.getUserId());
 
         CarePlan plan = new CarePlan();
         plan.setElderId(elder.getUserId());
@@ -280,6 +289,19 @@ class CarePlanModuleTests {
         User elder = createUser("elderCP3", "elder");
         createUser("leader3", "nurse_leader");
         createUser("nurse3", "nurse");
+        createUser("adminCreateChange3", "admin");
+
+        createActiveAdmission(elder.getUserId(), 1L);
+
+        CarePlan activePlan = new CarePlan();
+        activePlan.setElderId(elder.getUserId());
+        activePlan.setVersion(1);
+        activePlan.setStatus("active");
+        activePlan.setCareTime("在用计划");
+        activePlan.setCreatedBy(1L);
+        activePlan.setCreatedAt(LocalDateTime.now().minusDays(1));
+        activePlan.setUpdatedAt(LocalDateTime.now().minusDays(1));
+        carePlanRepository.save(activePlan);
 
         String leaderToken = loginAndGetToken("leader3", "123456");
         String nurseToken = loginAndGetToken("nurse3", "123456");
@@ -352,7 +374,7 @@ class CarePlanModuleTests {
     }
 
     @Test
-    void doctor_list_only_shows_doctor_review_items() throws Exception {
+    void doctor_list_shows_care_plans_without_review_filter() throws Exception {
         User elder1 = createUser("elderDoctorList1", "elder");
         User elder2 = createUser("elderDoctorList2", "elder");
         User nurse = createUser("nurseDoctorList", "nurse");
@@ -360,6 +382,8 @@ class CarePlanModuleTests {
         createUser("doctorDoctorList", "doctor");
         bindNurse(elder1.getUserId(), nurse.getUserId());
         bindNurse(elder2.getUserId(), nurse.getUserId());
+        createActiveAdmission(elder1.getUserId(), nurse.getUserId());
+        createActiveAdmission(elder2.getUserId(), nurse.getUserId());
 
         CarePlan active1 = new CarePlan();
         active1.setElderId(elder1.getUserId());
@@ -399,16 +423,16 @@ class CarePlanModuleTests {
                         .param("size", "20"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0"))
-                .andExpect(jsonPath("$.data.totalElements").value(1))
-                .andExpect(jsonPath("$.data.content[0].elderId").value(elder1.getUserId()))
-                .andExpect(jsonPath("$.data.content[0].pendingChangeStatus").value("doctor_review"));
+                .andExpect(jsonPath("$.data.totalElements").value(2))
+                .andExpect(jsonPath("$.data.content.length()").value(2));
     }
 
     @Test
-    void nurse_can_create_update_delete_care_plan_draft() throws Exception {
+    void nurse_can_create_update_delete_care_plan_directly() throws Exception {
         User elder = createUser("elderCRUD", "elder");
         User nurse = createUser("nurseCRUD", "nurse");
         bindNurse(elder.getUserId(), nurse.getUserId());
+        createActiveAdmission(elder.getUserId(), nurse.getUserId());
         String nurseToken = loginAndGetToken("nurseCRUD", "123456");
 
         MvcResult createResult = mockMvc.perform(post("/api/care-plans")
@@ -429,7 +453,7 @@ class CarePlanModuleTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0"))
                 .andExpect(jsonPath("$.data.elderId").value(elder.getUserId()))
-                .andExpect(jsonPath("$.data.status").value("draft"))
+                .andExpect(jsonPath("$.data.status").value("active"))
                 .andExpect(jsonPath("$.data.endDate").value("2026-03-31"))
                 .andReturn();
 
@@ -454,7 +478,7 @@ class CarePlanModuleTests {
                                 """.formatted(elder.getUserId())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0"))
-                .andExpect(jsonPath("$.data.status").value("draft"))
+                .andExpect(jsonPath("$.data.status").value("active"))
                 .andExpect(jsonPath("$.data.endDate").value("2026-04-01"));
 
         mockMvc.perform(delete("/api/care-plans/{id}", planId)
@@ -463,6 +487,82 @@ class CarePlanModuleTests {
                 .andExpect(jsonPath("$.code").value("0"));
 
         assertThat(carePlanRepository.findById(planId)).isEmpty();
+    }
+
+    @Test
+    void create_care_plan_without_active_admission_returns_400() throws Exception {
+        User elder = createUser("elderNoAdmission", "elder");
+        User nurse = createUser("nurseNoAdmission", "nurse");
+        bindNurse(elder.getUserId(), nurse.getUserId());
+        String nurseToken = loginAndGetToken("nurseNoAdmission", "123456");
+
+        mockMvc.perform(post("/api/care-plans")
+                        .header("Authorization", "Bearer " + nurseToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "elderId": %d,
+                                  "status": "draft",
+                                  "careTime": "无入住不能建计划"
+                                }
+                                """.formatted(elder.getUserId())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("老人当前不在住，不能维护或提交护理计划"));
+    }
+
+    @Test
+    void initial_change_submission_uses_draft_and_approval_activates_plan() throws Exception {
+        User elder = createUser("elderInitialFlow", "elder");
+        User nurse = createUser("nurseInitialFlow", "nurse");
+        createUser("leaderInitialFlow", "nurse_leader");
+        bindNurse(elder.getUserId(), nurse.getUserId());
+        createActiveAdmission(elder.getUserId(), nurse.getUserId());
+
+        CarePlan draftPlan = new CarePlan();
+        draftPlan.setElderId(elder.getUserId());
+        draftPlan.setVersion(1);
+        draftPlan.setStatus("draft");
+        draftPlan.setCareTime("初次护理计划");
+        draftPlan.setCareContent("首版内容");
+        draftPlan.setStartDate(LocalDate.now());
+        draftPlan.setCreatedBy(nurse.getUserId());
+        draftPlan.setCreatedAt(LocalDateTime.now().minusHours(1));
+        draftPlan.setUpdatedAt(LocalDateTime.now().minusHours(1));
+        draftPlan = carePlanRepository.save(draftPlan);
+
+        String nurseToken = loginAndGetToken("nurseInitialFlow", "123456");
+        String leaderToken = loginAndGetToken("leaderInitialFlow", "123456");
+
+        MvcResult createResult = mockMvc.perform(post("/api/care-plan-changes")
+                        .header("Authorization", "Bearer " + nurseToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "elderId":%d,
+                                  "draftPlanId":%d,
+                                  "reason":"首次制定护理计划"
+                                }
+                                """.formatted(elder.getUserId(), draftPlan.getCarePlanId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andReturn();
+
+        Long changeId = objectMapper.readTree(createResult.getResponse().getContentAsString(StandardCharsets.UTF_8))
+                .path("data").path("id").asLong();
+
+        CarePlanChangeRequest change = carePlanChangeRepository.findById(changeId).orElseThrow();
+        assertThat(change.getChangeType()).isEqualTo("initial");
+
+        mockMvc.perform(post("/api/care-plan-changes/{id}/approve", changeId)
+                        .header("Authorization", "Bearer " + leaderToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"comment\":\"初次计划通过\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("approved"));
+
+        CarePlan activePlan = carePlanRepository.findByElderIdAndStatus(elder.getUserId(), "active").orElseThrow();
+        assertThat(activePlan.getCarePlanId()).isEqualTo(draftPlan.getCarePlanId());
+        assertThat(activePlan.getCareTime()).isEqualTo("初次护理计划");
     }
 
     private User createUser(String username, String role) {
@@ -488,6 +588,19 @@ class CarePlanModuleTests {
         assignment.setCreatedAt(LocalDateTime.now());
         assignment.setUpdatedAt(LocalDateTime.now());
         careTeamAssignmentRepository.save(assignment);
+    }
+
+    private AdmissionRecord createActiveAdmission(Long elderId, Long createdBy) {
+        AdmissionRecord admission = new AdmissionRecord();
+        admission.setElderId(elderId);
+        admission.setBedId(elderId + 1000);
+        admission.setStatus("active");
+        admission.setStartDate(LocalDate.now().minusDays(1));
+        admission.setDepositAmount(java.math.BigDecimal.ZERO);
+        admission.setCreatedBy(createdBy);
+        admission.setCreatedAt(LocalDateTime.now().minusDays(1));
+        admission.setUpdatedAt(LocalDateTime.now().minusDays(1));
+        return admissionRecordRepository.save(admission);
     }
 
     private String loginAndGetToken(String username, String password) throws Exception {

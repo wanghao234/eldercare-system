@@ -3,6 +3,7 @@ package com.wanghao.eldercare.eldercaresystem.service.care;
 import com.wanghao.eldercare.eldercaresystem.common.*;
 import com.wanghao.eldercare.eldercaresystem.common.BusinessException;
 import com.wanghao.eldercare.eldercaresystem.common.ErrorCode;
+import com.wanghao.eldercare.eldercaresystem.common.NotFoundException;
 import com.wanghao.eldercare.eldercaresystem.common.audit.*;
 import com.wanghao.eldercare.eldercaresystem.common.security.*;
 import com.wanghao.eldercare.eldercaresystem.common.security.CurrentUser;
@@ -21,6 +22,7 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
@@ -111,10 +113,97 @@ public class CareRecordService {
         return weightRepo.save(entity);
     }
 
+    @Transactional
+    public MealIntakeRecord updateMeal(CurrentUser user, Long mealId, CreateMealRecordRequest request) {
+        MealIntakeRecord entity = mealRepo.findById(mealId).orElseThrow(() -> new NotFoundException("进食记录不存在"));
+        assertCanRecord(user, entity.getElderId());
+        assertElderUnchanged(entity.getElderId(), request.getElderId());
+        validateMeal(request);
+        entity.setMealType(normalizeText(request.getMealType()));
+        entity.setIntakeRatio(request.getIntakeRatio());
+        entity.setDietType(request.getDietType());
+        entity.setNote(request.getNote());
+        entity.setRecordTime(request.getRecordTime() == null ? entity.getRecordTime() : request.getRecordTime());
+        return mealRepo.save(entity);
+    }
+
+    @Transactional
+    public void deleteMeal(CurrentUser user, Long mealId) {
+        MealIntakeRecord entity = mealRepo.findById(mealId).orElseThrow(() -> new NotFoundException("进食记录不存在"));
+        assertCanRecord(user, entity.getElderId());
+        mealRepo.delete(entity);
+    }
+
+    @Transactional
+    public FluidIntakeRecord updateFluid(CurrentUser user, Long fluidId, CreateFluidRecordRequest request) {
+        FluidIntakeRecord entity = fluidRepo.findById(fluidId).orElseThrow(() -> new NotFoundException("饮水记录不存在"));
+        assertCanRecord(user, entity.getElderId());
+        assertElderUnchanged(entity.getElderId(), request.getElderId());
+        entity.setDrinkType(request.getDrinkType());
+        entity.setVolumeMl(request.getVolumeMl());
+        entity.setNote(request.getNote());
+        entity.setRecordTime(request.getRecordTime() == null ? entity.getRecordTime() : request.getRecordTime());
+        return fluidRepo.save(entity);
+    }
+
+    @Transactional
+    public void deleteFluid(CurrentUser user, Long fluidId) {
+        FluidIntakeRecord entity = fluidRepo.findById(fluidId).orElseThrow(() -> new NotFoundException("饮水记录不存在"));
+        assertCanRecord(user, entity.getElderId());
+        fluidRepo.delete(entity);
+    }
+
+    @Transactional
+    public BowelRecord updateBowel(CurrentUser user, Long bowelId, CreateBowelRecordRequest request) {
+        BowelRecord entity = bowelRepo.findById(bowelId).orElseThrow(() -> new NotFoundException("排便记录不存在"));
+        assertCanRecord(user, entity.getElderId());
+        assertElderUnchanged(entity.getElderId(), request.getElderId());
+        validateBowel(request);
+        entity.setBristolType(request.getBristolType());
+        entity.setAmount(request.getAmount());
+        entity.setIncontinence(request.getIncontinence());
+        entity.setBloodFlag(request.getBloodFlag());
+        entity.setNote(request.getNote());
+        entity.setRecordTime(request.getRecordTime() == null ? entity.getRecordTime() : request.getRecordTime());
+        return bowelRepo.save(entity);
+    }
+
+    @Transactional
+    public void deleteBowel(CurrentUser user, Long bowelId) {
+        BowelRecord entity = bowelRepo.findById(bowelId).orElseThrow(() -> new NotFoundException("排便记录不存在"));
+        assertCanRecord(user, entity.getElderId());
+        bowelRepo.delete(entity);
+    }
+
+    @Transactional
+    public WeightRecord updateWeight(CurrentUser user, Long weightId, CreateWeightRecordRequest request) {
+        WeightRecord entity = weightRepo.findById(weightId).orElseThrow(() -> new NotFoundException("体重记录不存在"));
+        assertCanRecord(user, entity.getElderId());
+        assertElderUnchanged(entity.getElderId(), request.getElderId());
+        validateWeight(request);
+        entity.setWeightKg(request.getWeightKg());
+        entity.setMeasureCtx(request.getMeasureCtx());
+        entity.setNote(request.getNote());
+        entity.setRecordTime(request.getRecordTime() == null ? entity.getRecordTime() : request.getRecordTime());
+        return weightRepo.save(entity);
+    }
+
+    @Transactional
+    public void deleteWeight(CurrentUser user, Long weightId) {
+        WeightRecord entity = weightRepo.findById(weightId).orElseThrow(() -> new NotFoundException("体重记录不存在"));
+        assertCanRecord(user, entity.getElderId());
+        weightRepo.delete(entity);
+    }
+
     @Transactional(readOnly = true)
     public List<MealIntakeRecord> getMealsByDate(CurrentUser user, Long elderId, LocalDate date) {
         LocalDateTime from = startOfDay(date);
         LocalDateTime to = endOfDay(date);
+        return getMealsByRange(user, elderId, from, to);
+    }
+
+    @Transactional(readOnly = true)
+    public List<MealIntakeRecord> getMealsByRange(CurrentUser user, Long elderId, LocalDateTime from, LocalDateTime to) {
         if (elderId != null) {
             permissionService.assertCanAccessElder(user, elderId);
             return mealRepo.findByElderIdAndRecordTimeBetweenOrderByRecordTimeAsc(elderId, from, to);
@@ -130,9 +219,30 @@ public class CareRecordService {
     }
 
     @Transactional(readOnly = true)
+    public List<MealIntakeRecord> getAllMeals(CurrentUser user, Long elderId) {
+        if (elderId != null) {
+            permissionService.assertCanAccessElder(user, elderId);
+            return mealRepo.findByElderIdOrderByRecordTimeAsc(elderId);
+        }
+        List<Long> visibleElderIds = permissionService.getVisibleElderIds(user);
+        if (visibleElderIds == null) {
+            return mealRepo.findAll(Sort.by(Sort.Direction.ASC, "recordTime"));
+        }
+        if (visibleElderIds.isEmpty()) {
+            return List.of();
+        }
+        return mealRepo.findByElderIdInOrderByRecordTimeAsc(visibleElderIds);
+    }
+
+    @Transactional(readOnly = true)
     public List<FluidIntakeRecord> getFluidsByDate(CurrentUser user, Long elderId, LocalDate date) {
         LocalDateTime from = startOfDay(date);
         LocalDateTime to = endOfDay(date);
+        return getFluidsByRange(user, elderId, from, to);
+    }
+
+    @Transactional(readOnly = true)
+    public List<FluidIntakeRecord> getFluidsByRange(CurrentUser user, Long elderId, LocalDateTime from, LocalDateTime to) {
         if (elderId != null) {
             permissionService.assertCanAccessElder(user, elderId);
             return fluidRepo.findByElderIdAndRecordTimeBetweenOrderByRecordTimeAsc(elderId, from, to);
@@ -145,6 +255,22 @@ public class CareRecordService {
             return List.of();
         }
         return fluidRepo.findByElderIdInAndRecordTimeBetweenOrderByRecordTimeAsc(visibleElderIds, from, to);
+    }
+
+    @Transactional(readOnly = true)
+    public List<FluidIntakeRecord> getAllFluids(CurrentUser user, Long elderId) {
+        if (elderId != null) {
+            permissionService.assertCanAccessElder(user, elderId);
+            return fluidRepo.findByElderIdOrderByRecordTimeAsc(elderId);
+        }
+        List<Long> visibleElderIds = permissionService.getVisibleElderIds(user);
+        if (visibleElderIds == null) {
+            return fluidRepo.findAll(Sort.by(Sort.Direction.ASC, "recordTime"));
+        }
+        if (visibleElderIds.isEmpty()) {
+            return List.of();
+        }
+        return fluidRepo.findByElderIdInOrderByRecordTimeAsc(visibleElderIds);
     }
 
     @Transactional(readOnly = true)
@@ -164,6 +290,22 @@ public class CareRecordService {
     }
 
     @Transactional(readOnly = true)
+    public List<BowelRecord> getAllBowels(CurrentUser user, Long elderId) {
+        if (elderId != null) {
+            permissionService.assertCanAccessElder(user, elderId);
+            return bowelRepo.findByElderIdOrderByRecordTimeAsc(elderId);
+        }
+        List<Long> visibleElderIds = permissionService.getVisibleElderIds(user);
+        if (visibleElderIds == null) {
+            return bowelRepo.findAll(Sort.by(Sort.Direction.ASC, "recordTime"));
+        }
+        if (visibleElderIds.isEmpty()) {
+            return List.of();
+        }
+        return bowelRepo.findByElderIdInOrderByRecordTimeAsc(visibleElderIds);
+    }
+
+    @Transactional(readOnly = true)
     public List<WeightRecord> getWeightsByRange(CurrentUser user, Long elderId, LocalDateTime from, LocalDateTime to) {
         if (elderId != null) {
             permissionService.assertCanAccessElder(user, elderId);
@@ -177,6 +319,22 @@ public class CareRecordService {
             return List.of();
         }
         return weightRepo.findByElderIdInAndRecordTimeBetweenOrderByRecordTimeAsc(visibleElderIds, from, to);
+    }
+
+    @Transactional(readOnly = true)
+    public List<WeightRecord> getAllWeights(CurrentUser user, Long elderId) {
+        if (elderId != null) {
+            permissionService.assertCanAccessElder(user, elderId);
+            return weightRepo.findByElderIdOrderByRecordTimeAsc(elderId);
+        }
+        List<Long> visibleElderIds = permissionService.getVisibleElderIds(user);
+        if (visibleElderIds == null) {
+            return weightRepo.findAll(Sort.by(Sort.Direction.ASC, "recordTime"));
+        }
+        if (visibleElderIds.isEmpty()) {
+            return List.of();
+        }
+        return weightRepo.findByElderIdInOrderByRecordTimeAsc(visibleElderIds);
     }
 
     private void assertCanRecord(CurrentUser user, Long elderId) {
@@ -208,6 +366,12 @@ public class CareRecordService {
         Double weightKg = request.getWeightKg();
         if (weightKg == null || weightKg < 10 || weightKg > 200) {
             throw badRequest("weightKg需在10~200之间");
+        }
+    }
+
+    private void assertElderUnchanged(Long currentElderId, Long requestElderId) {
+        if (!currentElderId.equals(requestElderId)) {
+            throw badRequest("elderId不允许修改");
         }
     }
 

@@ -1,6 +1,7 @@
 package com.wanghao.eldercare.eldercaresystem.dto.workflow;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.wanghao.eldercare.eldercaresystem.common.*;
 import com.wanghao.eldercare.eldercaresystem.common.audit.*;
 import com.wanghao.eldercare.eldercaresystem.common.security.*;
@@ -34,6 +35,7 @@ public class CompleteWfTaskRequest {
 
     private List<Long> familyIds;
 
+    @JsonAlias({"attachmentsJson"})
     private List<String> attachments;
 
     public String getAction() { return action; }

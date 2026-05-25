@@ -128,15 +128,15 @@ class AuthSecurityTests {
     }
 
     @Test
-    void login_elder_should_be_rejected() throws Exception {
+    void login_elder_should_be_allowed() throws Exception {
         createUser("elder1", "elder", "active", "123456");
 
         mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"elder1\",\"password\":\"123456\"}"))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value("40301"))
-                .andExpect(jsonPath("$.message").value("当前角色不允许登录后台"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.user.role").value("elder"));
     }
 
     private User createUser(String username, String role, String status, String plainPassword) {

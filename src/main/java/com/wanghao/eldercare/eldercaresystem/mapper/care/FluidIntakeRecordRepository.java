@@ -18,5 +18,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface FluidIntakeRecordRepository extends JpaRepository<FluidIntakeRecord, Long> {
     List<FluidIntakeRecord> findByElderIdAndRecordTimeBetweenOrderByRecordTimeAsc(Long elderId, LocalDateTime from, LocalDateTime to);
     List<FluidIntakeRecord> findByElderIdInAndRecordTimeBetweenOrderByRecordTimeAsc(List<Long> elderIds, LocalDateTime from, LocalDateTime to);
+    List<FluidIntakeRecord> findByElderIdOrderByRecordTimeAsc(Long elderId);
+    List<FluidIntakeRecord> findByElderIdInOrderByRecordTimeAsc(List<Long> elderIds);
     List<FluidIntakeRecord> findByRecordTimeBetweenOrderByRecordTimeAsc(LocalDateTime from, LocalDateTime to);
 }

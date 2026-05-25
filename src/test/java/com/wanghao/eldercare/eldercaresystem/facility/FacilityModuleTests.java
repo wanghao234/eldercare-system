@@ -87,6 +87,62 @@ class FacilityModuleTests {
     }
 
     @Test
+    void doctor_can_list_facility_resources_but_cannot_modify() throws Exception {
+        createUser("admin_facility_read_1", "admin");
+        createUser("doctor_facility_read_1", "doctor");
+        String adminToken = loginAndGetToken("admin_facility_read_1", "123456");
+        String doctorToken = loginAndGetToken("doctor_facility_read_1", "123456");
+
+        Long buildingId = createBuilding(adminToken, "Read栋");
+        Long floorId = createFloor(adminToken, buildingId, "1F", "一层");
+        Long roomId = createRoom(adminToken, floorId, "101", "single");
+        createBed(adminToken, roomId, "101-A");
+
+        mockMvc.perform(get("/api/facility/rooms")
+                        .header("Authorization", "Bearer " + doctorToken)
+                        .param("page", "0")
+                        .param("size", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"));
+
+        mockMvc.perform(get("/api/facility/beds")
+                        .header("Authorization", "Bearer " + doctorToken)
+                        .param("page", "0")
+                        .param("size", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"));
+
+        mockMvc.perform(post("/api/facility/beds")
+                        .header("Authorization", "Bearer " + doctorToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"roomId":%d,"bedCode":"101-B"}
+                                """.formatted(roomId)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("40301"));
+    }
+
+    @Test
+    void family_cannot_list_facility_resources() throws Exception {
+        createUser("family_facility_read_1", "family");
+        String familyToken = loginAndGetToken("family_facility_read_1", "123456");
+
+        mockMvc.perform(get("/api/facility/rooms")
+                        .header("Authorization", "Bearer " + familyToken)
+                        .param("page", "0")
+                        .param("size", "10"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("40301"));
+
+        mockMvc.perform(get("/api/facility/beds")
+                        .header("Authorization", "Bearer " + familyToken)
+                        .param("page", "0")
+                        .param("size", "10"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("40301"));
+    }
+
+    @Test
     void room_delete_should_soft_delete_to_deleted() throws Exception {
         createUser("admin_facility_2", "admin");
         String token = loginAndGetToken("admin_facility_2", "123456");

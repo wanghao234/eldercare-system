@@ -172,6 +172,28 @@ public class StatsService {
         return response;
     }
 
+    public PersonnelStatsResponse personnelStats() {
+        PersonnelStatsResponse response = new PersonnelStatsResponse();
+
+        Map<String, Long> staffByRole = new LinkedHashMap<>();
+        staffByRole.put("admin", countUsersByRole("admin"));
+        staffByRole.put("nurse_leader", countUsersByRole("nurse_leader"));
+        staffByRole.put("nurse", countUsersByRole("nurse"));
+        staffByRole.put("caregiver", countUsersByRole("caregiver"));
+        staffByRole.put("doctor", countUsersByRole("doctor"));
+
+        long totalStaff = 0L;
+        for (Long count : staffByRole.values()) {
+            totalStaff += count;
+        }
+
+        response.setStaffByRole(staffByRole);
+        response.setTotalStaff(totalStaff);
+        response.setTotalElders(countUsersByRole("elder"));
+        response.setTotalFamilies(countUsersByRole("family"));
+        return response;
+    }
+
     private String buildWhere(String timeColumn, LocalDateTime from, LocalDateTime to) {
         StringBuilder where = new StringBuilder(" where 1=1 ");
         if (from != null) {
@@ -215,5 +237,14 @@ public class StatsService {
 
     private double round4(double value) {
         return BigDecimal.valueOf(value).setScale(4, RoundingMode.HALF_UP).doubleValue();
+    }
+
+    private long countUsersByRole(String role) {
+        Long count = jdbcTemplate.queryForObject(
+                "select count(*) from users where deleted_at is null and lower(role) = ?",
+                Long.class,
+                role
+        );
+        return valueOrZero(count);
     }
 }

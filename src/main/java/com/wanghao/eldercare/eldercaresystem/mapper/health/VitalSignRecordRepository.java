@@ -19,6 +19,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface VitalSignRecordRepository extends JpaRepository<VitalSignRecord, Long> {
     List<VitalSignRecord> findByElderIdAndRecordTimeBetweenOrderByRecordTimeAsc(Long elderId, LocalDateTime from, LocalDateTime to);
     List<VitalSignRecord> findByElderIdInAndRecordTimeBetweenOrderByRecordTimeAsc(List<Long> elderIds, LocalDateTime from, LocalDateTime to);
+    List<VitalSignRecord> findByElderIdOrderByRecordTimeAsc(Long elderId);
+    List<VitalSignRecord> findByElderIdInOrderByRecordTimeAsc(List<Long> elderIds);
     List<VitalSignRecord> findByRecordTimeBetweenOrderByRecordTimeAsc(LocalDateTime from, LocalDateTime to);
     Optional<VitalSignRecord> findTopByElderIdAndRecordTimeBetweenOrderByRecordTimeDesc(Long elderId, LocalDateTime from, LocalDateTime to);
 }

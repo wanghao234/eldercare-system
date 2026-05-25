@@ -1,18 +1,6 @@
 package com.wanghao.eldercare.eldercaresystem.dto.medication;
 
-import com.wanghao.eldercare.eldercaresystem.common.*;
-import com.wanghao.eldercare.eldercaresystem.common.audit.*;
-import com.wanghao.eldercare.eldercaresystem.common.security.*;
-import com.wanghao.eldercare.eldercaresystem.common.security.perm.*;
-import com.wanghao.eldercare.eldercaresystem.common.security.rbac.*;
-import com.wanghao.eldercare.eldercaresystem.common.security.scope.*;
-import com.wanghao.eldercare.eldercaresystem.common.ws.*;
-import com.wanghao.eldercare.eldercaresystem.controller.medication.*;
-import com.wanghao.eldercare.eldercaresystem.entity.medication.*;
-import com.wanghao.eldercare.eldercaresystem.mapper.medication.*;
-import com.wanghao.eldercare.eldercaresystem.service.medication.*;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import java.time.LocalDate;
 import java.util.List;
@@ -22,17 +10,20 @@ public class CreateMedicationPlanRequest {
     @NotNull(message = "elderId不能为空")
     private Long elderId;
 
-    @NotNull(message = "medicationId不能为空")
+    @Deprecated
     private Long medicationId;
 
-    @NotBlank(message = "dosage不能为空")
+    @Deprecated
     private String dosage;
 
-    @NotBlank(message = "frequency不能为空")
+    @Deprecated
     private String frequency;
 
-    @NotEmpty(message = "times不能为空")
+    @Deprecated
     private List<String> times;
+
+    @Valid
+    private List<MedicationPlanItemRequest> medicationItems;
 
     @NotNull(message = "startDate不能为空")
     private LocalDate startDate;
@@ -77,6 +68,14 @@ public class CreateMedicationPlanRequest {
 
     public void setTimes(List<String> times) {
         this.times = times;
+    }
+
+    public List<MedicationPlanItemRequest> getMedicationItems() {
+        return medicationItems;
+    }
+
+    public void setMedicationItems(List<MedicationPlanItemRequest> medicationItems) {
+        this.medicationItems = medicationItems;
     }
 
     public LocalDate getStartDate() {

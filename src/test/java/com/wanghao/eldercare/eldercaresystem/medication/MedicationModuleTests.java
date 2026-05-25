@@ -116,6 +116,7 @@ class MedicationModuleTests {
         bind(elder.getUserId(), nurse.getUserId(), null);
 
         Medication medication = createMedication("阿司匹林");
+        Medication medication2 = createMedication("维生素D");
         String nurseToken = loginAndGetToken("nurseMed1", "123456");
 
         mockMvc.perform(post("/api/medication-plans")
@@ -124,20 +125,32 @@ class MedicationModuleTests {
                         .content("""
                                 {
                                   "elderId":%d,
-                                  "medicationId":%d,
-                                  "dosage":"1片",
-                                  "frequency":"bid",
-                                  "times":["08:00","20:00"],
+                                  "medicationItems":[
+                                    {
+                                      "medicationId":%d,
+                                      "dosage":"1片",
+                                      "frequency":"bid",
+                                      "times":["08:00","20:00"]
+                                    },
+                                    {
+                                      "medicationId":%d,
+                                      "dosage":"2粒",
+                                      "frequency":"qd",
+                                      "times":["12:00"]
+                                    }
+                                  ],
                                   "startDate":"%s",
                                   "endDate":"%s"
                                 }
-                                """.formatted(elder.getUserId(), medication.getMedicationId(), LocalDate.now(), LocalDate.now().plusDays(3))))
+                                """.formatted(elder.getUserId(), medication.getMedicationId(), medication2.getMedicationId(), LocalDate.now(), LocalDate.now().plusDays(3))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0"))
-                .andExpect(jsonPath("$.data.status").value("active"));
+                .andExpect(jsonPath("$.data.status").value("active"))
+                .andExpect(jsonPath("$.data.medicationItems.length()").value(2))
+                .andExpect(jsonPath("$.data.medicationItems[1].medicationId").value(medication2.getMedicationId()));
 
         List<Task> tasks = taskRepository.findByRelatedBizTypeAndRelatedBizId("med_plan", medicationPlanRepository.findAll().get(0).getPlanId());
-        assertThat(tasks.size()).isGreaterThanOrEqualTo(1);
+        assertThat(tasks.size()).isGreaterThanOrEqualTo(3);
     }
 
     @Test
@@ -199,9 +212,10 @@ class MedicationModuleTests {
         bind(elder.getUserId(), nurse.getUserId(), null);
 
         Medication medication = createMedication("二甲双胍");
+        Medication medication2 = createMedication("维生素B");
         String nurseToken = loginAndGetToken("nurseMed3", "123456");
 
-        Long planId = createPlanAndGetId(nurseToken, elder.getUserId(), medication.getMedicationId());
+        Long planId = createPlanAndGetId(nurseToken, elder.getUserId(), medication.getMedicationId(), medication2.getMedicationId());
 
         mockMvc.perform(post("/api/medication-records")
                         .header("Authorization", "Bearer " + nurseToken)
@@ -213,13 +227,14 @@ class MedicationModuleTests {
                                   "planId":%d,
                                   "administeredTime":"2026-03-01 08:05:00",
                                   "status":"given",
-                                  "dosage":"1片",
+                                  "dosage":"2粒",
                                   "note":"按时给药"
                                 }
-                                """.formatted(elder.getUserId(), medication.getMedicationId(), planId)))
+                                """.formatted(elder.getUserId(), medication2.getMedicationId(), planId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0"))
-                .andExpect(jsonPath("$.data.status").value("given"));
+                .andExpect(jsonPath("$.data.status").value("given"))
+                .andExpect(jsonPath("$.data.medicationId").value(medication2.getMedicationId()));
     }
 
     @Test
@@ -349,20 +364,49 @@ class MedicationModuleTests {
     }
 
     private Long createPlanAndGetId(String token, Long elderId, Long medicationId) throws Exception {
+        return createPlanAndGetId(token, elderId, medicationId, null);
+    }
+
+    private Long createPlanAndGetId(String token, Long elderId, Long medicationId, Long extraMedicationId) throws Exception {
+        String medicationItemsJson = extraMedicationId == null
+                ? """
+                    [
+                      {
+                        "medicationId":%d,
+                        "dosage":"1片",
+                        "frequency":"bid",
+                        "times":["08:00","20:00"]
+                      }
+                    ]
+                    """.formatted(medicationId)
+                : """
+                    [
+                      {
+                        "medicationId":%d,
+                        "dosage":"1片",
+                        "frequency":"bid",
+                        "times":["08:00","20:00"]
+                      },
+                      {
+                        "medicationId":%d,
+                        "dosage":"2粒",
+                        "frequency":"qd",
+                        "times":["12:00"]
+                      }
+                    ]
+                    """.formatted(medicationId, extraMedicationId);
+
         MvcResult result = mockMvc.perform(post("/api/medication-plans")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
                                   "elderId":%d,
-                                  "medicationId":%d,
-                                  "dosage":"1片",
-                                  "frequency":"bid",
-                                  "times":["08:00","20:00"],
+                                  "medicationItems":%s,
                                   "startDate":"%s",
                                   "endDate":"%s"
                                 }
-                                """.formatted(elderId, medicationId, LocalDate.now(), LocalDate.now().plusDays(3))))
+                                """.formatted(elderId, medicationItemsJson, LocalDate.now(), LocalDate.now().plusDays(3))))
                 .andExpect(status().isOk())
                 .andReturn();
 

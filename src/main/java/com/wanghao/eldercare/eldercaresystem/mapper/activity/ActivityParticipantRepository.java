@@ -21,5 +21,8 @@ public interface ActivityParticipantRepository extends JpaRepository<ActivityPar
     Optional<ActivityParticipant> findByActivityIdAndElderId(Long activityId, Long elderId);
 
     Page<ActivityParticipant> findByActivityId(Long activityId, Pageable pageable);
-}
 
+    long countByActivityId(Long activityId);
+
+    long countByActivityIdAndStatus(Long activityId, String status);
+}

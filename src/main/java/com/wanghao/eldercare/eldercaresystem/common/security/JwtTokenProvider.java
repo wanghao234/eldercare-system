@@ -21,9 +21,11 @@ import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
+import org.springframework.util.StringUtils;
 
 @Component
 public class JwtTokenProvider {
+    private static final String DEFAULT_SECRET = "change-me-change-me-change-me-change-me";
 
     private final JwtProperties jwtProperties;
     private SecretKey secretKey;
@@ -34,7 +36,15 @@ public class JwtTokenProvider {
 
     @PostConstruct
     public void init() {
-        this.secretKey = Keys.hmacShaKeyFor(jwtProperties.getSecret().getBytes(StandardCharsets.UTF_8));
+        String configuredSecret = resolveSecret();
+        this.secretKey = Keys.hmacShaKeyFor(configuredSecret.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String resolveSecret() {
+        if (StringUtils.hasText(jwtProperties.getSecret())) {
+            return jwtProperties.getSecret().trim();
+        }
+        return DEFAULT_SECRET;
     }
 
     public String createToken(Long userId, String username, String role, String status, Set<String> perms) {

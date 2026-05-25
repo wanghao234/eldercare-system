@@ -29,8 +29,6 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/facility")
-@PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
-        + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
 public class FacilityController {
 
     private final FacilityService facilityService;
@@ -40,6 +38,11 @@ public class FacilityController {
     }
 
     @GetMapping("/buildings")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_CAREGIVER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_DOCTOR)")
     @Audited(action = AuditAction.VIEW_SENSITIVE, entityType = "facility_buildings")
     public ApiResponse<FacilityPageResponse<FacilityBuilding>> listBuildings(@RequestParam(defaultValue = "0") int page,
                                                                              @RequestParam(defaultValue = "20") int size,
@@ -48,12 +51,16 @@ public class FacilityController {
     }
 
     @PostMapping("/buildings")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.CREATE, entityType = "facility_buildings", responseIdPath = "buildingId", requestFields = {"buildingName"})
     public ApiResponse<FacilityBuilding> createBuilding(@Valid @RequestBody BuildingUpsertRequest request) {
         return ApiResponse.ok(facilityService.createBuilding(request));
     }
 
     @PutMapping("/buildings/{id}")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.UPDATE, entityType = "facility_buildings", entityIdArg = "id", requestFields = {"buildingName"})
     public ApiResponse<FacilityBuilding> updateBuilding(@PathVariable Long id,
                                                         @Valid @RequestBody BuildingUpsertRequest request) {
@@ -61,6 +68,8 @@ public class FacilityController {
     }
 
     @DeleteMapping("/buildings/{id}")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.DELETE, entityType = "facility_buildings", entityIdArg = "id")
     public ApiResponse<Void> deleteBuilding(@PathVariable Long id) {
         facilityService.deleteBuilding(id);
@@ -68,6 +77,11 @@ public class FacilityController {
     }
 
     @GetMapping("/floors")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_CAREGIVER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_DOCTOR)")
     @Audited(action = AuditAction.VIEW_SENSITIVE, entityType = "facility_floors")
     public ApiResponse<FacilityPageResponse<FacilityFloor>> listFloors(@RequestParam(required = false) Long buildingId,
                                                                        @RequestParam(defaultValue = "0") int page,
@@ -76,6 +90,8 @@ public class FacilityController {
     }
 
     @PostMapping("/floors")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.CREATE, entityType = "facility_floors", responseIdPath = "floorId",
             requestFields = {"buildingId", "floorNo", "floorName"})
     public ApiResponse<FacilityFloor> createFloor(@Valid @RequestBody FloorCreateRequest request) {
@@ -83,6 +99,8 @@ public class FacilityController {
     }
 
     @PutMapping("/floors/{id}")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.UPDATE, entityType = "facility_floors", entityIdArg = "id", requestFields = {"floorNo", "floorName"})
     public ApiResponse<FacilityFloor> updateFloor(@PathVariable Long id,
                                                   @Valid @RequestBody FloorUpdateRequest request) {
@@ -90,6 +108,8 @@ public class FacilityController {
     }
 
     @DeleteMapping("/floors/{id}")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.DELETE, entityType = "facility_floors", entityIdArg = "id")
     public ApiResponse<Void> deleteFloor(@PathVariable Long id) {
         facilityService.deleteFloor(id);
@@ -97,6 +117,11 @@ public class FacilityController {
     }
 
     @GetMapping("/rooms")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_CAREGIVER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_DOCTOR)")
     @Audited(action = AuditAction.VIEW_SENSITIVE, entityType = "facility_rooms")
     public ApiResponse<FacilityPageResponse<FacilityRoom>> listRooms(@RequestParam(required = false) Long floorId,
                                                                      @RequestParam(required = false, defaultValue = "active") String status,
@@ -106,6 +131,8 @@ public class FacilityController {
     }
 
     @PostMapping("/rooms")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.CREATE, entityType = "facility_rooms", responseIdPath = "roomId",
             requestFields = {"floorId", "roomNumber", "roomType", "note"})
     public ApiResponse<FacilityRoom> createRoom(@Valid @RequestBody RoomCreateRequest request) {
@@ -113,6 +140,8 @@ public class FacilityController {
     }
 
     @PutMapping("/rooms/{id}")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.UPDATE, entityType = "facility_rooms", entityIdArg = "id",
             requestFields = {"roomNumber", "roomType", "note", "status"})
     public ApiResponse<FacilityRoom> updateRoom(@PathVariable Long id,
@@ -121,6 +150,8 @@ public class FacilityController {
     }
 
     @PostMapping("/rooms/{id}/status")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.TRANSITION, entityType = "facility_rooms", entityIdArg = "id", fromField = "from", toField = "to")
     public ApiResponse<FacilityRoom> transitionRoomStatus(@PathVariable Long id,
                                                            @Valid @RequestBody StatusTransitionRequest request) {
@@ -128,12 +159,19 @@ public class FacilityController {
     }
 
     @DeleteMapping("/rooms/{id}")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.DELETE, entityType = "facility_rooms", entityIdArg = "id")
     public ApiResponse<FacilityRoom> deleteRoom(@PathVariable Long id) {
         return ApiResponse.ok(facilityService.softDeleteRoom(id));
     }
 
     @GetMapping("/beds")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_CAREGIVER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_DOCTOR)")
     @Audited(action = AuditAction.VIEW_SENSITIVE, entityType = "facility_beds")
     public ApiResponse<FacilityPageResponse<FacilityBed>> listBeds(@RequestParam(required = false) Long roomId,
                                                                    @RequestParam(required = false) String status,
@@ -143,12 +181,16 @@ public class FacilityController {
     }
 
     @PostMapping("/beds")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.CREATE, entityType = "facility_beds", responseIdPath = "bedId", requestFields = {"roomId", "bedCode"})
     public ApiResponse<FacilityBed> createBed(@Valid @RequestBody BedCreateRequest request) {
         return ApiResponse.ok(facilityService.createBed(request));
     }
 
     @PutMapping("/beds/{id}")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.UPDATE, entityType = "facility_beds", entityIdArg = "id", requestFields = {"bedCode", "status"})
     public ApiResponse<FacilityBed> updateBed(@PathVariable Long id,
                                               @Valid @RequestBody BedUpdateRequest request) {
@@ -156,6 +198,8 @@ public class FacilityController {
     }
 
     @PostMapping("/beds/{id}/status")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.TRANSITION, entityType = "facility_beds", entityIdArg = "id", fromField = "from", toField = "to")
     public ApiResponse<FacilityBed> transitionBedStatus(@PathVariable Long id,
                                                          @Valid @RequestBody StatusTransitionRequest request) {
@@ -163,6 +207,8 @@ public class FacilityController {
     }
 
     @DeleteMapping("/beds/{id}")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.DELETE, entityType = "facility_beds", entityIdArg = "id")
     public ApiResponse<Void> deleteBed(@PathVariable Long id) {
         facilityService.deleteBed(id);

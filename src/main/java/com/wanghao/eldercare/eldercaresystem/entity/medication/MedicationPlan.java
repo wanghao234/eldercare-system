@@ -1,16 +1,5 @@
 package com.wanghao.eldercare.eldercaresystem.entity.medication;
 
-import com.wanghao.eldercare.eldercaresystem.common.*;
-import com.wanghao.eldercare.eldercaresystem.common.audit.*;
-import com.wanghao.eldercare.eldercaresystem.common.security.*;
-import com.wanghao.eldercare.eldercaresystem.common.security.perm.*;
-import com.wanghao.eldercare.eldercaresystem.common.security.rbac.*;
-import com.wanghao.eldercare.eldercaresystem.common.security.scope.*;
-import com.wanghao.eldercare.eldercaresystem.common.ws.*;
-import com.wanghao.eldercare.eldercaresystem.controller.medication.*;
-import com.wanghao.eldercare.eldercaresystem.dto.medication.*;
-import com.wanghao.eldercare.eldercaresystem.mapper.medication.*;
-import com.wanghao.eldercare.eldercaresystem.service.medication.*;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -19,7 +8,6 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import jakarta.persistence.*;
 
 @Entity(name = "MedicationPlan")
 @Table(name = "medication_plans")
@@ -44,6 +32,9 @@ public class MedicationPlan {
 
     @Column(name = "times_json", nullable = false)
     private String timesJson;
+
+    @Column(name = "medications_json", nullable = false)
+    private String medicationsJson;
 
     @Column(name = "start_date", nullable = false)
     private LocalDate startDate;
@@ -109,6 +100,14 @@ public class MedicationPlan {
 
     public void setTimesJson(String timesJson) {
         this.timesJson = timesJson;
+    }
+
+    public String getMedicationsJson() {
+        return medicationsJson;
+    }
+
+    public void setMedicationsJson(String medicationsJson) {
+        this.medicationsJson = medicationsJson;
     }
 
     public LocalDate getStartDate() {

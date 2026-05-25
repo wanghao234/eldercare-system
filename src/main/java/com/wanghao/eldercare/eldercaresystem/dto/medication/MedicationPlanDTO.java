@@ -1,16 +1,5 @@
 package com.wanghao.eldercare.eldercaresystem.dto.medication;
 
-import com.wanghao.eldercare.eldercaresystem.common.*;
-import com.wanghao.eldercare.eldercaresystem.common.audit.*;
-import com.wanghao.eldercare.eldercaresystem.common.security.*;
-import com.wanghao.eldercare.eldercaresystem.common.security.perm.*;
-import com.wanghao.eldercare.eldercaresystem.common.security.rbac.*;
-import com.wanghao.eldercare.eldercaresystem.common.security.scope.*;
-import com.wanghao.eldercare.eldercaresystem.common.ws.*;
-import com.wanghao.eldercare.eldercaresystem.controller.medication.*;
-import com.wanghao.eldercare.eldercaresystem.entity.medication.*;
-import com.wanghao.eldercare.eldercaresystem.mapper.medication.*;
-import com.wanghao.eldercare.eldercaresystem.service.medication.*;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -22,6 +11,7 @@ public class MedicationPlanDTO {
     private String dosage;
     private String frequency;
     private List<String> times;
+    private List<MedicationPlanItemDTO> medicationItems;
     private LocalDate startDate;
     private LocalDate endDate;
     private String status;
@@ -75,6 +65,14 @@ public class MedicationPlanDTO {
 
     public void setTimes(List<String> times) {
         this.times = times;
+    }
+
+    public List<MedicationPlanItemDTO> getMedicationItems() {
+        return medicationItems;
+    }
+
+    public void setMedicationItems(List<MedicationPlanItemDTO> medicationItems) {
+        this.medicationItems = medicationItems;
     }
 
     public LocalDate getStartDate() {

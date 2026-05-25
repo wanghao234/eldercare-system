@@ -34,18 +34,21 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
     private final PermissionPointService permissionPointService;
-    private final boolean blockFamilyElderLogin;
+    private final boolean blockFamilyLogin;
+    private final boolean blockElderLogin;
 
     public AuthService(UserRepository userRepository,
                        PasswordEncoder passwordEncoder,
                        JwtTokenProvider jwtTokenProvider,
                        PermissionPointService permissionPointService,
-                       @Value("${security.auth.block-family-elder-login:true}") boolean blockFamilyElderLogin) {
+                       @Value("${security.auth.block-family-elder-login:true}") boolean blockFamilyLogin,
+                       @Value("${security.auth.block-elder-login:false}") boolean blockElderLogin) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenProvider = jwtTokenProvider;
         this.permissionPointService = permissionPointService;
-        this.blockFamilyElderLogin = blockFamilyElderLogin;
+        this.blockFamilyLogin = blockFamilyLogin;
+        this.blockElderLogin = blockElderLogin;
     }
 
     @Transactional
@@ -66,7 +69,7 @@ public class AuthService {
             throw new BusinessException(ErrorCode.AUTH_INVALID_CREDENTIALS, "用户名或密码错误", HttpStatus.UNAUTHORIZED);
         }
 
-        if (blockFamilyElderLogin && !isAllowedBackendRole(user.getRole())) {
+        if (isBlockedLoginRole(user.getRole())) {
             throw new BusinessException(ErrorCode.AUTH_FORBIDDEN, "当前角色不允许登录后台", HttpStatus.FORBIDDEN);
         }
 
@@ -100,12 +103,18 @@ public class AuthService {
         return hash;
     }
 
-    private boolean isAllowedBackendRole(String role) {
+    private boolean isBlockedLoginRole(String role) {
         if (role == null) {
-            return false;
+            return true;
         }
         String normalized = role.toLowerCase(Locale.ROOT);
-        return !"family".equals(normalized) && !"elder".equals(normalized);
+        if ("family".equals(normalized)) {
+            return blockFamilyLogin;
+        }
+        if ("elder".equals(normalized)) {
+            return blockElderLogin;
+        }
+        return false;
     }
 
     @Transactional(readOnly = true)

@@ -27,9 +27,15 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     Optional<User> findByUserIdAndDeletedAtIsNull(Long userId);
 
+    Optional<User> findFirstByRoleIgnoreCaseAndStatusIgnoreCaseAndDeletedAtIsNullOrderByUserIdAsc(String role, String status);
+
     List<User> findByRoleIgnoreCaseAndRealNameAndDeletedAtIsNull(String role, String realName);
 
+    boolean existsByUsername(String username);
+
     boolean existsByUsernameAndDeletedAtIsNull(String username);
+
+    boolean existsByUsernameAndUserIdNot(String username, Long userId);
 
     boolean existsByUsernameAndUserIdNotAndDeletedAtIsNull(String username, Long userId);
 
@@ -65,6 +71,16 @@ public interface UserRepository extends JpaRepository<User, Long> {
                                   @Param("keyword") String keyword,
                                   @Param("status") String status,
                                   Pageable pageable);
+
+    @Query("""
+            SELECT u FROM User u
+            WHERE u.deletedAt IS NULL
+              AND LOWER(u.role) IN :roles
+              AND (:status IS NULL OR LOWER(u.status) = LOWER(:status))
+            ORDER BY u.realName ASC, u.username ASC, u.userId ASC
+            """)
+    List<User> findActiveByRoles(@Param("roles") Collection<String> roles,
+                                 @Param("status") String status);
 
     @Query("""
             SELECT u FROM User u

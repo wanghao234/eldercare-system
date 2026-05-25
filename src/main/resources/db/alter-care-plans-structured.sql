@@ -1,0 +1,15 @@
+ALTER TABLE `care_plans`
+  ADD COLUMN `care_level` varchar(32) DEFAULT NULL COMMENT '护理等级快照，如L1/L2/L3' AFTER `end_date`,
+  ADD COLUMN `health_assessment` text COMMENT '健康评估' AFTER `diet_plan`,
+  ADD COLUMN `nursing_problem` text COMMENT '护理问题' AFTER `health_assessment`,
+  ADD COLUMN `risk_tags` varchar(255) DEFAULT NULL COMMENT '风险标签，多个用逗号分隔' AFTER `nursing_problem`,
+  ADD COLUMN `nursing_goal` text COMMENT '护理目标' AFTER `risk_tags`,
+  ADD COLUMN `daily_care` text COMMENT '生活护理' AFTER `nursing_goal`,
+  ADD COLUMN `medication_care` text COMMENT '用药护理，第一版手动填写' AFTER `daily_care`,
+  ADD COLUMN `health_monitoring` text COMMENT '健康监测' AFTER `medication_care`,
+  ADD COLUMN `rehabilitation_activity` text COMMENT '康复活动' AFTER `health_monitoring`,
+  ADD COLUMN `psychological_care` text COMMENT '心理关怀' AFTER `rehabilitation_activity`,
+  ADD COLUMN `safety_precaution` text COMMENT '安全防护' AFTER `psychological_care`,
+  ADD COLUMN `execution_frequency` varchar(128) DEFAULT NULL COMMENT '执行频率，如每日执行，早晚各一次' AFTER `safety_precaution`,
+  ADD COLUMN `evaluation` text COMMENT '护理评价' AFTER `execution_frequency`,
+  ADD COLUMN `ai_generated` tinyint(1) NOT NULL DEFAULT '0' COMMENT '是否由AI生成：0否，1是' AFTER `evaluation`;

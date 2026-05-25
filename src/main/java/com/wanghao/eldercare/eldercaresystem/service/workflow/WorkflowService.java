@@ -26,6 +26,10 @@ import com.wanghao.eldercare.eldercaresystem.mapper.alarm.AlarmRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.admission.AdmissionRecordRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.careteam.CareTeamAssignmentRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.workflow.*;
+import com.wanghao.eldercare.eldercaresystem.service.file.FileStorageService;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -34,6 +38,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -43,6 +48,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
+import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class WorkflowService {
@@ -58,6 +65,8 @@ public class WorkflowService {
     private final PermissionService permissionService;
     private final ObjectMapper objectMapper;
     private final AdmissionWorkflowOrchestrator admissionWorkflowOrchestrator;
+    private final AdmissionContractImportService admissionContractImportService;
+    private final FileStorageService fileStorageService;
 
     public WorkflowService(WfInstanceRepository wfInstanceRepository,
                            WfTaskRepository wfTaskRepository,
@@ -67,7 +76,9 @@ public class WorkflowService {
                            CareTeamAssignmentRepository careTeamAssignmentRepository,
                            PermissionService permissionService,
                            ObjectMapper objectMapper,
-                           AdmissionWorkflowOrchestrator admissionWorkflowOrchestrator) {
+                           AdmissionWorkflowOrchestrator admissionWorkflowOrchestrator,
+                           AdmissionContractImportService admissionContractImportService,
+                           FileStorageService fileStorageService) {
         this.wfInstanceRepository = wfInstanceRepository;
         this.wfTaskRepository = wfTaskRepository;
         this.wfTaskActionRepository = wfTaskActionRepository;
@@ -77,6 +88,8 @@ public class WorkflowService {
         this.permissionService = permissionService;
         this.objectMapper = objectMapper;
         this.admissionWorkflowOrchestrator = admissionWorkflowOrchestrator;
+        this.admissionContractImportService = admissionContractImportService;
+        this.fileStorageService = fileStorageService;
     }
 
     @Transactional
@@ -212,6 +225,79 @@ public class WorkflowService {
         return enrichTask(loadTask(wfTaskId));
     }
 
+    @Transactional(readOnly = true)
+    public byte[] downloadContractTemplate(CurrentUser currentUser, Long wfTaskId, CompleteWfTaskRequest request) {
+        WfTask task = wfTaskRepository.findById(wfTaskId)
+                .orElseThrow(() -> new NotFoundException("流程任务不存在"));
+        WfInstance instance = wfInstanceRepository.findById(task.getInstanceId())
+                .orElseThrow(() -> new NotFoundException("流程实例不存在"));
+        if (!"admission".equalsIgnoreCase(instance.getProcessKey())) {
+            throw badRequest("当前流程不支持下载合同模板");
+        }
+        return admissionWorkflowOrchestrator.downloadContractTemplate(currentUser, request, task, instance);
+    }
+
+    @Transactional(readOnly = true)
+    public String buildContractTemplateFileName(Long wfTaskId) {
+        WfTask task = wfTaskRepository.findById(wfTaskId)
+                .orElseThrow(() -> new NotFoundException("流程任务不存在"));
+        WfInstance instance = wfInstanceRepository.findById(task.getInstanceId())
+                .orElseThrow(() -> new NotFoundException("流程实例不存在"));
+        if (!"admission".equalsIgnoreCase(instance.getProcessKey())) {
+            throw badRequest("当前流程不支持下载合同模板");
+        }
+        return admissionWorkflowOrchestrator.buildContractTemplateFileName(instance);
+    }
+
+    @Transactional
+    public ImportAdmissionContractResponse importAdmissionContract(CurrentUser currentUser, MultipartFile file) {
+        return admissionContractImportService.importContract(file);
+    }
+
+    @Transactional
+    public ImportAdmissionContractResponse importAdmissionContract(CurrentUser currentUser, MultipartFile file, Long admissionId) {
+        if (admissionId == null) {
+            return admissionContractImportService.importContract(file);
+        }
+        AdmissionRecord admission = admissionRecordRepository.findById(admissionId)
+                .orElseThrow(() -> new NotFoundException("入住记录不存在"));
+        return admissionContractImportService.importContract(file, admission);
+    }
+
+    @Transactional
+    public ImportAdmissionContractResponse importAdmissionContractByTask(CurrentUser currentUser, Long wfTaskId, MultipartFile file) {
+        WfTask task = wfTaskRepository.findById(wfTaskId)
+                .orElseThrow(() -> new NotFoundException("流程任务不存在"));
+        WfInstance instance = wfInstanceRepository.findById(task.getInstanceId())
+                .orElseThrow(() -> new NotFoundException("流程实例不存在"));
+        if (!"admission".equalsIgnoreCase(instance.getProcessKey())) {
+            throw badRequest("当前流程不支持导入合同");
+        }
+        return admissionWorkflowOrchestrator.importContract(currentUser, file, task, instance);
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] downloadImportedContractByTask(CurrentUser currentUser, Long wfTaskId) {
+        WfTask task = wfTaskRepository.findById(wfTaskId)
+                .orElseThrow(() -> new NotFoundException("流程任务不存在"));
+        WfInstance instance = wfInstanceRepository.findById(task.getInstanceId())
+                .orElseThrow(() -> new NotFoundException("流程实例不存在"));
+        if (!"admission".equalsIgnoreCase(instance.getProcessKey())) {
+            throw badRequest("当前流程不支持下载已上传合同");
+        }
+        return admissionWorkflowOrchestrator.downloadImportedContract(currentUser, task, instance);
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] downloadTaskAttachment(CurrentUser currentUser, Long wfTaskId, String attachmentUrl) {
+        WfTask task = wfTaskRepository.findById(wfTaskId)
+                .orElseThrow(() -> new NotFoundException("流程任务不存在"));
+        ensureCanOperateTask(currentUser, task);
+        String normalizedUrl = normalizeUploadUrl(attachmentUrl);
+        ensureAttachmentBelongsToTask(task, normalizedUrl);
+        return loadUploadFile(normalizedUrl);
+    }
+
     @Transactional
     public Long startAlarmWorkflow(Long alarmId, Long startedBy) {
         WfInstance instance = new WfInstance();
@@ -324,6 +410,10 @@ public class WorkflowService {
             return;
         }
 
+        if (isUnboundAlarmInstance(instance)) {
+            throw new AccessDeniedException("未绑定老人的报警仅管理员或护士长可访问");
+        }
+
         if (isAdmissionCareTeamBedReserveInstanceAccessible(currentUser, instance)) {
             return;
         }
@@ -340,7 +430,7 @@ public class WorkflowService {
         if ("alarm".equalsIgnoreCase(instance.getBizType())) {
             Alarm alarm = alarmRepository.findById(instance.getBizId()).orElse(null);
             if (alarm != null) {
-                permissionService.assertCanAccessElder(currentUser, alarm.getElderId());
+                assertCanAccessAlarm(currentUser, alarm);
                 return;
             }
         }
@@ -354,6 +444,10 @@ public class WorkflowService {
         }
 
         WfInstance instance = wfInstanceRepository.findById(task.getInstanceId()).orElse(null);
+
+        if (isUnboundAlarmInstance(instance)) {
+            throw new AccessDeniedException("未绑定老人的报警仅管理员或护士长可操作");
+        }
 
         if (isAdmissionHealthAssessTask(instance, task)
                 && (currentUser.hasRole("doctor") || currentUser.hasRole("nurse_leader"))) {
@@ -376,7 +470,7 @@ public class WorkflowService {
         if (instance != null && "alarm".equalsIgnoreCase(instance.getBizType())) {
             Alarm alarm = alarmRepository.findById(instance.getBizId()).orElse(null);
             if (alarm != null) {
-                permissionService.assertCanAccessElder(currentUser, alarm.getElderId());
+                assertCanAccessAlarm(currentUser, alarm);
                 return;
             }
         }
@@ -486,6 +580,24 @@ public class WorkflowService {
         return currentUser.hasRole("admin") || currentUser.hasRole("nurse_leader");
     }
 
+    private boolean isUnboundAlarmInstance(WfInstance instance) {
+        if (instance == null || !"alarm".equalsIgnoreCase(instance.getBizType())) {
+            return false;
+        }
+        Alarm alarm = alarmRepository.findById(instance.getBizId()).orElse(null);
+        return alarm != null && alarm.getElderId() == null;
+    }
+
+    private void assertCanAccessAlarm(CurrentUser currentUser, Alarm alarm) {
+        if (alarm.getElderId() == null) {
+            if (isAdminOrLeader(currentUser)) {
+                return;
+            }
+            throw new AccessDeniedException("未绑定老人的报警仅管理员或护士长可访问");
+        }
+        permissionService.assertCanAccessElder(currentUser, alarm.getElderId());
+    }
+
     private String toJson(Object value) {
         if (value == null) {
             return null;
@@ -495,6 +607,67 @@ public class WorkflowService {
         } catch (JsonProcessingException e) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "JSON 序列化失败", HttpStatus.BAD_REQUEST);
         }
+    }
+
+    private void ensureAttachmentBelongsToTask(WfTask task, String attachmentUrl) {
+        String attachmentsJson = task.getAttachmentsJson();
+        if (!StringUtils.hasText(attachmentsJson)) {
+            throw badRequest("该任务没有附件");
+        }
+        try {
+            JsonNode node = objectMapper.readTree(attachmentsJson);
+            if (!node.isArray()) {
+                throw badRequest("任务附件格式非法");
+            }
+            boolean matched = false;
+            for (JsonNode item : node) {
+                String candidate = normalizeUploadUrl(item.asText(null));
+                if (Objects.equals(candidate, attachmentUrl)) {
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched) {
+                throw badRequest("附件不属于该任务");
+            }
+        } catch (JsonProcessingException e) {
+            throw badRequest("任务附件格式非法");
+        }
+    }
+
+    private byte[] loadUploadFile(String uploadUrl) {
+        String fileName = uploadUrl.substring(uploadUrl.lastIndexOf('/') + 1);
+        Path basePath = fileStorageService.getStorageAbsolutePath();
+        Path path = basePath.resolve(fileName).normalize();
+        try {
+            if (!path.startsWith(basePath) || !Files.exists(path)) {
+                throw badRequest("附件文件不存在");
+            }
+            return Files.readAllBytes(path);
+        } catch (Exception ex) {
+            if (ex instanceof BusinessException be) {
+                throw be;
+            }
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "读取附件失败", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private String normalizeUploadUrl(String value) {
+        if (!StringUtils.hasText(value)) {
+            throw badRequest("附件地址不能为空");
+        }
+        String trimmed = value.trim();
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            try {
+                trimmed = URI.create(trimmed).getPath();
+            } catch (Exception ex) {
+                throw badRequest("附件地址格式非法");
+            }
+        }
+        if (!StringUtils.hasText(trimmed) || !trimmed.startsWith("/uploads/")) {
+            throw badRequest("仅支持下载 /uploads 下的附件");
+        }
+        return trimmed;
     }
 
     private JsonNode resolveFormData(CompleteWfTaskRequest request) {

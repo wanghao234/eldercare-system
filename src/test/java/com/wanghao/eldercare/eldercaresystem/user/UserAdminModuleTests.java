@@ -11,7 +11,11 @@ import com.wanghao.eldercare.eldercaresystem.common.security.scope.*;
 import com.wanghao.eldercare.eldercaresystem.common.ws.*;
 import com.wanghao.eldercare.eldercaresystem.controller.user.*;
 import com.wanghao.eldercare.eldercaresystem.dto.user.*;
+import com.wanghao.eldercare.eldercaresystem.entity.careteam.CareTeamAssignment;
+import com.wanghao.eldercare.eldercaresystem.entity.profile.ElderProfileEntity;
 import com.wanghao.eldercare.eldercaresystem.entity.user.*;
+import com.wanghao.eldercare.eldercaresystem.mapper.careteam.CareTeamAssignmentRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.profile.ElderProfileRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.user.*;
 import com.wanghao.eldercare.eldercaresystem.service.user.*;
 import java.nio.charset.StandardCharsets;
@@ -27,6 +31,9 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -47,10 +54,18 @@ class UserAdminModuleTests {
     private UserRepository userRepository;
 
     @Autowired
+    private ElderProfileRepository elderProfileRepository;
+
+    @Autowired
+    private CareTeamAssignmentRepository careTeamAssignmentRepository;
+
+    @Autowired
     private PasswordEncoder passwordEncoder;
 
     @BeforeEach
     void setUp() {
+        careTeamAssignmentRepository.deleteAll();
+        elderProfileRepository.deleteAll();
         userRepository.deleteAll();
     }
 
@@ -93,6 +108,79 @@ class UserAdminModuleTests {
                 .andExpect(jsonPath("$.code").value("0"))
                 .andExpect(jsonPath("$.data.username").value("created_by_leader"))
                 .andExpect(jsonPath("$.data.role").value("admin"));
+    }
+
+    @Test
+    void nurseLeader_cannot_create_user_with_soft_deleted_duplicate_username() throws Exception {
+        createUser("leader_users_3", "nurse_leader", "leader3@test.local");
+        User deletedUser = createUser("elder1", "elder", "elder1@test.local");
+        deletedUser.setDeletedAt(LocalDateTime.now());
+        deletedUser.setUpdatedAt(LocalDateTime.now());
+        userRepository.saveAndFlush(deletedUser);
+        String token = loginAndGetToken("leader_users_3", "123456");
+
+        mockMvc.perform(post("/api/admin/users")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "username":"elder1",
+                                  "password":"123456",
+                                  "role":"elder",
+                                  "status":"active"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("40001"))
+                .andExpect(jsonPath("$.message").value("用户名已存在"));
+    }
+
+    @Test
+    void nurseLeader_can_create_elder_with_family_account() throws Exception {
+        createUser("leader_users_4", "nurse_leader", "leader4@test.local");
+        String token = loginAndGetToken("leader_users_4", "123456");
+
+        MvcResult result = mockMvc.perform(post("/api/admin/users/elders")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "username":"elder_new_1",
+                                  "password":"elder123",
+                                  "realName":"张三",
+                                  "phone":"13800138000",
+                                  "familyName":"李四",
+                                  "familyPhone":"13900139000"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.elder.username").value("elder_new_1"))
+                .andExpect(jsonPath("$.data.elder.role").value("elder"))
+                .andExpect(jsonPath("$.data.family.username").value("13900139000"))
+                .andExpect(jsonPath("$.data.family.role").value("family"))
+                .andReturn();
+
+        JsonNode data = objectMapper.readTree(result.getResponse().getContentAsString(StandardCharsets.UTF_8)).path("data");
+        Long elderId = data.path("elder").path("userId").asLong();
+        Long familyId = data.path("family").path("userId").asLong();
+
+        User family = userRepository.findByUserIdAndDeletedAtIsNull(familyId).orElseThrow();
+        assertTrue(passwordEncoder.matches("123456", family.getPasswordHash()));
+
+        ElderProfileEntity profile = elderProfileRepository.findById(elderId).orElseThrow();
+        assertEquals("李四", profile.getEmergencyContactName());
+        assertEquals("13900139000", profile.getEmergencyContactPhone());
+
+        CareTeamAssignment assignment = careTeamAssignmentRepository
+                .findAllByElderIdAndIsActiveAndFamilyIdIsNotNullOrderByAssignmentIdAsc(elderId, 1)
+                .stream()
+                .findFirst()
+                .orElseThrow();
+        assertEquals(familyId, assignment.getFamilyId());
+
+        String familyToken = loginAndGetToken("13900139000", "123456");
+        assertNotNull(familyToken);
     }
 
     private User createUser(String username, String role, String email) {

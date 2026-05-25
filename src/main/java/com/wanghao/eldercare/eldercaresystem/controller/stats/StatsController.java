@@ -23,8 +23,6 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/stats")
-@PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
-        + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
 public class StatsController {
 
     private final StatsService statsService;
@@ -34,6 +32,8 @@ public class StatsController {
     }
 
     @GetMapping("/alarms")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.VIEW_SENSITIVE, entityType = "stats", sensitive = true)
     public ApiResponse<AlarmStatsResponse> alarmStats(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
@@ -42,6 +42,8 @@ public class StatsController {
     }
 
     @GetMapping("/tasks")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.VIEW_SENSITIVE, entityType = "stats", sensitive = true)
     public ApiResponse<TaskStatsResponse> taskStats(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
@@ -50,6 +52,8 @@ public class StatsController {
     }
 
     @GetMapping("/medication")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.VIEW_SENSITIVE, entityType = "stats", sensitive = true)
     public ApiResponse<MedicationStatsResponse> medicationStats(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
@@ -58,9 +62,21 @@ public class StatsController {
     }
 
     @GetMapping("/occupancy")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
     @Audited(action = AuditAction.VIEW_SENSITIVE, entityType = "stats", sensitive = true)
     public ApiResponse<OccupancyStatsResponse> occupancyStats() {
         return ApiResponse.ok(statsService.occupancyStats());
     }
-}
 
+    @GetMapping("/personnel")
+    @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_CAREGIVER,"
+            + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_DOCTOR)")
+    @Audited(action = AuditAction.VIEW_SENSITIVE, entityType = "stats", sensitive = true)
+    public ApiResponse<PersonnelStatsResponse> personnelStats() {
+        return ApiResponse.ok(statsService.personnelStats());
+    }
+}

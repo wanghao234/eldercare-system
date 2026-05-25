@@ -111,7 +111,7 @@ class AuditLogTests {
     }
 
     @Test
-    void unauthenticated_create_alarm_writes_401_audit() throws Exception {
+    void unauthenticated_create_alarm_is_permitted() throws Exception {
         mockMvc.perform(post("/api/alarms")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -122,15 +122,16 @@ class AuditLogTests {
                                   "source":"manual"
                                 }
                                 """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andExpect(jsonPath("$.data.alarmId").isNumber());
+    }
+
+    @Test
+    void unauthenticated_get_alarm_list_still_returns_401() throws Exception {
+        mockMvc.perform(get("/api/alarms"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("40101"));
-
-        AuditLog log = findLatestByAction(AuditAction.CREATE);
-        assertThat(log).isNotNull();
-        assertThat(log.getEntityType()).isEqualTo("alarms");
-        JsonNode detail = objectMapper.readTree(log.getDetailJson());
-        assertThat(detail.path("result").asText()).isEqualTo("FAIL");
-        assertThat(detail.path("errorCode").asText()).isEqualTo("40101");
     }
 
     @Test
@@ -238,4 +239,3 @@ class AuditLogTests {
                 .orElse(null);
     }
 }
-

@@ -17,8 +17,13 @@ import com.wanghao.eldercare.eldercaresystem.entity.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.mapper.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.service.workflow.*;
 import jakarta.validation.Valid;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,6 +34,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.util.StringUtils;
 
 @RestController
 @RequestMapping("/api/workflows")
@@ -84,5 +91,84 @@ public class WorkflowController {
                                            @Valid @RequestBody CompleteWfTaskRequest request) {
         CurrentUser currentUser = currentUserUtils.getCurrentUser();
         return ApiResponse.ok(workflowService.complete(currentUser, wfTaskId, request));
+    }
+
+    @PostMapping(value = "/tasks/{wfTaskId}/contract-template",
+            produces = "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    public ResponseEntity<byte[]> downloadContractTemplate(@PathVariable Long wfTaskId,
+                                                           @Valid @RequestBody(required = false) CompleteWfTaskRequest request) {
+        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        byte[] content = workflowService.downloadContractTemplate(
+                currentUser,
+                wfTaskId,
+                request == null ? new CompleteWfTaskRequest() : request
+        );
+        String fileName = workflowService.buildContractTemplateFileName(wfTaskId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"));
+        headers.setContentDisposition(ContentDisposition.attachment()
+                .filename(fileName, StandardCharsets.UTF_8)
+                .build());
+        return ResponseEntity.ok().headers(headers).body(content);
+    }
+
+    @PostMapping(value = "/contracts/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<ImportAdmissionContractResponse> importAdmissionContract(@RequestPart("file") MultipartFile file,
+                                                                                @RequestPart(value = "admissionId", required = false) Long admissionId) {
+        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        return ApiResponse.ok(workflowService.importAdmissionContract(currentUser, file, admissionId));
+    }
+
+    @PostMapping(value = "/tasks/{wfTaskId}/contract-import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<ImportAdmissionContractResponse> importAdmissionContractByTask(@PathVariable Long wfTaskId,
+                                                                                      @RequestPart("file") MultipartFile file) {
+        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        return ApiResponse.ok(workflowService.importAdmissionContractByTask(currentUser, wfTaskId, file));
+    }
+
+    @GetMapping(value = "/tasks/{wfTaskId}/contract-file",
+            produces = "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    public ResponseEntity<byte[]> downloadImportedContractByTask(@PathVariable Long wfTaskId) {
+        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        byte[] content = workflowService.downloadImportedContractByTask(currentUser, wfTaskId);
+        String fileName = workflowService.buildContractTemplateFileName(wfTaskId).replace(".docx", "(已上传).docx");
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"));
+        headers.setContentDisposition(ContentDisposition.attachment()
+                .filename(fileName, StandardCharsets.UTF_8)
+                .build());
+        return ResponseEntity.ok().headers(headers).body(content);
+    }
+
+    @GetMapping("/tasks/{wfTaskId}/attachments/download")
+    public ResponseEntity<byte[]> downloadTaskAttachment(@PathVariable Long wfTaskId,
+                                                         @RequestParam("url") String url) {
+        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        byte[] content = workflowService.downloadTaskAttachment(currentUser, wfTaskId, url);
+        String fileName = extractFileName(url);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+        headers.setContentDisposition(ContentDisposition.attachment()
+                .filename(fileName, StandardCharsets.UTF_8)
+                .build());
+        return ResponseEntity.ok().headers(headers).body(content);
+    }
+
+    private String extractFileName(String url) {
+        if (!StringUtils.hasText(url)) {
+            return "attachment.bin";
+        }
+        String value = url.trim();
+        int queryPos = value.indexOf('?');
+        if (queryPos >= 0) {
+            value = value.substring(0, queryPos);
+        }
+        int slashPos = value.lastIndexOf('/');
+        if (slashPos < 0 || slashPos == value.length() - 1) {
+            return "attachment.bin";
+        }
+        return value.substring(slashPos + 1);
     }
 }

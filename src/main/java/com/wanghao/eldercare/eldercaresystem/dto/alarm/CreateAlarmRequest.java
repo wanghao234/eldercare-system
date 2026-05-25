@@ -11,29 +11,27 @@ import com.wanghao.eldercare.eldercaresystem.controller.alarm.*;
 import com.wanghao.eldercare.eldercaresystem.entity.alarm.*;
 import com.wanghao.eldercare.eldercaresystem.mapper.alarm.*;
 import com.wanghao.eldercare.eldercaresystem.service.alarm.*;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
+import java.math.BigDecimal;
 
 public class CreateAlarmRequest {
 
-    @NotNull(message = "elderId 不能为空")
     private Long elderId;
 
     private Long roomId;
     private Long bedId;
-
-    @NotBlank(message = "alarmType 不能为空")
     private String alarmType;
-
-    @NotBlank(message = "severity 不能为空")
     private String severity;
-
-    @NotBlank(message = "source 不能为空")
     private String source;
 
     private String locationText;
     private String note;
     private String attachmentsJson;
+    private Long cameraId;
+    private BigDecimal confidence;
+    private String snapshotUrl;
+    private BigDecimal mapX;
+    private BigDecimal mapY;
+    private String idempotencyKey;
 
     public Long getElderId() {
         return elderId;
@@ -105,5 +103,53 @@ public class CreateAlarmRequest {
 
     public void setAttachmentsJson(String attachmentsJson) {
         this.attachmentsJson = attachmentsJson;
+    }
+
+    public Long getCameraId() {
+        return cameraId;
+    }
+
+    public void setCameraId(Long cameraId) {
+        this.cameraId = cameraId;
+    }
+
+    public BigDecimal getConfidence() {
+        return confidence;
+    }
+
+    public void setConfidence(BigDecimal confidence) {
+        this.confidence = confidence;
+    }
+
+    public String getSnapshotUrl() {
+        return snapshotUrl;
+    }
+
+    public void setSnapshotUrl(String snapshotUrl) {
+        this.snapshotUrl = snapshotUrl;
+    }
+
+    public BigDecimal getMapX() {
+        return mapX;
+    }
+
+    public void setMapX(BigDecimal mapX) {
+        this.mapX = mapX;
+    }
+
+    public BigDecimal getMapY() {
+        return mapY;
+    }
+
+    public void setMapY(BigDecimal mapY) {
+        this.mapY = mapY;
+    }
+
+    public String getIdempotencyKey() {
+        return idempotencyKey;
+    }
+
+    public void setIdempotencyKey(String idempotencyKey) {
+        this.idempotencyKey = idempotencyKey;
     }
 }

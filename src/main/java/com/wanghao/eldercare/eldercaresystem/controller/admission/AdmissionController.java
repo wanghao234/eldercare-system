@@ -70,7 +70,7 @@ public class AdmissionController {
             + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE,"
             + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_CAREGIVER,"
             + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_FAMILY)")
-    public ApiResponse<AdmissionRecord> getAdmission(@PathVariable Long id) {
+    public ApiResponse<AdmissionDetailDTO> getAdmission(@PathVariable Long id) {
         CurrentUser currentUser = currentUserUtils.getCurrentUser();
         return ApiResponse.ok(admissionService.getAdmissionDetail(currentUser, id));
     }

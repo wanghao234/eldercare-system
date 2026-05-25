@@ -18,5 +18,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface MealIntakeRecordRepository extends JpaRepository<MealIntakeRecord, Long> {
     List<MealIntakeRecord> findByElderIdAndRecordTimeBetweenOrderByRecordTimeAsc(Long elderId, LocalDateTime from, LocalDateTime to);
     List<MealIntakeRecord> findByElderIdInAndRecordTimeBetweenOrderByRecordTimeAsc(List<Long> elderIds, LocalDateTime from, LocalDateTime to);
+    List<MealIntakeRecord> findByElderIdOrderByRecordTimeAsc(Long elderId);
+    List<MealIntakeRecord> findByElderIdInOrderByRecordTimeAsc(List<Long> elderIds);
     List<MealIntakeRecord> findByRecordTimeBetweenOrderByRecordTimeAsc(LocalDateTime from, LocalDateTime to);
 }

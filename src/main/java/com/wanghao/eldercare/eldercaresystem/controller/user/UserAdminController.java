@@ -29,7 +29,8 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/admin/users")
-@PreAuthorize("hasAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN)")
+@PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
+        + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER)")
 public class UserAdminController {
 
     private final UserAdminService userAdminService;
@@ -57,6 +58,13 @@ public class UserAdminController {
             requestFields = {"username", "role", "status", "realName", "phone", "email", "avatarUrl"})
     public ApiResponse<UserAdminDTO> create(@Valid @RequestBody CreateUserRequest request) {
         return ApiResponse.ok(userAdminService.create(request));
+    }
+
+    @PostMapping("/elders")
+    @Audited(action = AuditAction.CREATE, entityType = "users", responseIdPath = "elder.userId",
+            requestFields = {"username", "realName", "phone", "familyName", "familyPhone"})
+    public ApiResponse<ElderWithFamilyCreateResponse> createElderWithFamily(@Valid @RequestBody CreateElderWithFamilyRequest request) {
+        return ApiResponse.ok(userAdminService.createElderWithFamily(request));
     }
 
     @PutMapping("/{id}")

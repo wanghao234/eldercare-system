@@ -209,7 +209,7 @@ public class RectificationService {
         Alarm alarm = alarmRepository.findById(alarmId)
                 .orElseThrow(() -> new NotFoundException("报警不存在"));
 
-        permissionService.assertCanAccessElder(currentUser, alarm.getElderId());
+        assertCanAccessAlarm(currentUser, alarm);
 
         boolean allowed = isAdminOrLeader(currentUser) || alarm.getAcceptedBy() != null
                 && alarm.getAcceptedBy().equals(currentUser.getUserId());
@@ -351,6 +351,16 @@ public class RectificationService {
             return true;
         }
         return "cancelled".equals(to) && !TERMINAL_STATUS.contains(from);
+    }
+
+    private void assertCanAccessAlarm(CurrentUser user, Alarm alarm) {
+        if (alarm.getElderId() == null) {
+            if (isAdminOrLeader(user)) {
+                return;
+            }
+            throw new AccessDeniedException("未绑定老人的报警仅管理员或护士长可访问");
+        }
+        permissionService.assertCanAccessElder(user, alarm.getElderId());
     }
 
     private boolean isAdminOrLeader(CurrentUser user) {

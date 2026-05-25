@@ -43,6 +43,9 @@ public class AdmissionRecord {
     @Column(name = "package_name", length = 128)
     private String packageName;
 
+    @Column(name = "contract_file_url", length = 255)
+    private String contractFileUrl;
+
     @Column(name = "status", nullable = false, length = 32)
     private String status;
 
@@ -105,6 +108,14 @@ public class AdmissionRecord {
 
     public void setPackageName(String packageName) {
         this.packageName = packageName;
+    }
+
+    public String getContractFileUrl() {
+        return contractFileUrl;
+    }
+
+    public void setContractFileUrl(String contractFileUrl) {
+        this.contractFileUrl = contractFileUrl;
     }
 
     public String getStatus() {

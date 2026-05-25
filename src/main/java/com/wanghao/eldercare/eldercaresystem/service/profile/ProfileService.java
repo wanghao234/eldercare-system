@@ -200,6 +200,33 @@ public class ProfileService {
     }
 
     @Transactional(readOnly = true)
+    public ProfilePageResponse<ElderProfileListItemDTO> listBoundElderProfiles(CurrentUser currentUser,
+                                                                                String keyword,
+                                                                                String careLevel,
+                                                                                String status,
+                                                                                int page,
+                                                                                int size) {
+        if (!(currentUser.hasRole("admin")
+                || currentUser.hasRole("nurse_leader")
+                || currentUser.hasRole("nurse")
+                || currentUser.hasRole("caregiver")
+                || currentUser.hasRole("doctor")
+                || currentUser.hasRole("family")
+                || currentUser.hasRole("elder"))) {
+            throw new AccessDeniedException("当前角色无权访问绑定老人列表");
+        }
+
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "updatedAt", "userId"));
+        List<Long> scopeIds = (currentUser.hasRole("admin")
+                || currentUser.hasRole("nurse_leader")
+                || currentUser.hasRole("doctor"))
+                ? null
+                : permissionService.getVisibleElderIds(currentUser);
+        Page<User> userPage = searchUsersByRoleWithScope("elder", scopeIds, keyword, status, careLevel, pageable);
+        return toElderProfilePageResponse(userPage, page, size);
+    }
+
+    @Transactional(readOnly = true)
     public StaffProfileDTO getStaffProfile(CurrentUser currentUser, Long staffId, boolean includeSensitive) {
         User staffUser = getUserOrThrow(staffId);
         requireStaffRole(staffUser);
@@ -542,6 +569,9 @@ public class ProfileService {
     }
 
     private void applyStaffUserSelfFields(User user, StaffProfileUpdateRequest request) {
+        if (request.getRealName() != null) {
+            user.setRealName(trimToNull(request.getRealName()));
+        }
         if (request.getPhone() != null) {
             user.setPhone(trimToNull(request.getPhone()));
         }
@@ -682,6 +712,32 @@ public class ProfileService {
         ProfilePageResponse<StaffListItemDTO> response = new ProfilePageResponse<>();
         response.setContent(List.of());
         response.setTotalElements(0);
+        response.setPage(page);
+        response.setSize(size);
+        return response;
+    }
+
+    private ProfilePageResponse<ElderProfileListItemDTO> toElderProfilePageResponse(Page<User> userPage, int page, int size) {
+        List<Long> elderIds = userPage.getContent().stream().map(User::getUserId).toList();
+        Map<Long, ElderProfileEntity> profileMap = mapElderProfiles(elderIds);
+        Map<Long, AdmissionRecord> admissionMap = mapActiveAdmissions(elderIds);
+        Map<Long, FacilityBed> bedMap = mapBedsById(admissionMap.values().stream().map(AdmissionRecord::getBedId).toList());
+        Map<Long, FacilityRoom> roomMap = mapRoomsById(bedMap.values().stream().map(FacilityBed::getRoomId).toList());
+        Map<Long, FacilityFloor> floorMap = mapFloorsById(roomMap.values().stream().map(FacilityRoom::getFloorId).toList());
+        Map<Long, FacilityBuilding> buildingMap = mapBuildingsById(floorMap.values().stream().map(FacilityFloor::getBuildingId).toList());
+        List<ElderProfileListItemDTO> content = userPage.getContent().stream()
+                .map(u -> toElderListItemDTO(u,
+                        profileMap.get(u.getUserId()),
+                        admissionMap.get(u.getUserId()),
+                        bedMap,
+                        roomMap,
+                        floorMap,
+                        buildingMap))
+                .toList();
+
+        ProfilePageResponse<ElderProfileListItemDTO> response = new ProfilePageResponse<>();
+        response.setContent(content);
+        response.setTotalElements(userPage.getTotalElements());
         response.setPage(page);
         response.setSize(size);
         return response;

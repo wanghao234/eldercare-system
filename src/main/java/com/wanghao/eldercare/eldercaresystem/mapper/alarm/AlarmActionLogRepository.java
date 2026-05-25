@@ -11,9 +11,12 @@ import com.wanghao.eldercare.eldercaresystem.controller.alarm.*;
 import com.wanghao.eldercare.eldercaresystem.dto.alarm.*;
 import com.wanghao.eldercare.eldercaresystem.entity.alarm.*;
 import com.wanghao.eldercare.eldercaresystem.service.alarm.*;
+import java.util.Collection;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface AlarmActionLogRepository extends JpaRepository<AlarmActionLog, Long> {
     List<AlarmActionLog> findByAlarmIdOrderByActionTimeAsc(Long alarmId);
+
+    List<AlarmActionLog> findByAlarmIdInOrderByActionTimeDescLogIdDesc(Collection<Long> alarmIds);
 }

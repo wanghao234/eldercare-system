@@ -12,7 +12,11 @@ import com.wanghao.eldercare.eldercaresystem.common.security.scope.*;
 import com.wanghao.eldercare.eldercaresystem.common.ws.*;
 import com.wanghao.eldercare.eldercaresystem.controller.user.*;
 import com.wanghao.eldercare.eldercaresystem.dto.user.*;
+import com.wanghao.eldercare.eldercaresystem.entity.careteam.CareTeamAssignment;
+import com.wanghao.eldercare.eldercaresystem.entity.profile.ElderProfileEntity;
 import com.wanghao.eldercare.eldercaresystem.entity.user.*;
+import com.wanghao.eldercare.eldercaresystem.mapper.careteam.CareTeamAssignmentRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.profile.ElderProfileRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.user.*;
 import java.time.LocalDateTime;
 import java.util.Locale;
@@ -32,12 +36,20 @@ public class UserAdminService {
             "admin", "nurse_leader", "nurse", "caregiver", "doctor", "family", "elder"
     );
     private static final Set<String> ALLOWED_STATUS = Set.of("active", "disabled");
+    private static final String DEFAULT_FAMILY_PASSWORD = "123456";
 
     private final UserRepository userRepository;
+    private final ElderProfileRepository elderProfileRepository;
+    private final CareTeamAssignmentRepository careTeamAssignmentRepository;
     private final PasswordEncoder passwordEncoder;
 
-    public UserAdminService(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+    public UserAdminService(UserRepository userRepository,
+                            ElderProfileRepository elderProfileRepository,
+                            CareTeamAssignmentRepository careTeamAssignmentRepository,
+                            PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
+        this.elderProfileRepository = elderProfileRepository;
+        this.careTeamAssignmentRepository = careTeamAssignmentRepository;
         this.passwordEncoder = passwordEncoder;
     }
 
@@ -69,9 +81,7 @@ public class UserAdminService {
     @Transactional
     public UserAdminDTO create(CreateUserRequest request) {
         String username = normalizeRequiredText(request.getUsername(), "username 不能为空");
-        if (userRepository.existsByUsernameAndDeletedAtIsNull(username)) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "用户名已存在", HttpStatus.BAD_REQUEST);
-        }
+        assertUsernameAvailable(username);
 
         User user = new User();
         user.setUsername(username);
@@ -92,12 +102,79 @@ public class UserAdminService {
     }
 
     @Transactional
+    public ElderWithFamilyCreateResponse createElderWithFamily(CreateElderWithFamilyRequest request) {
+        String elderUsername = normalizeRequiredText(request.getUsername(), "username 不能为空");
+        String elderPassword = normalizeRequiredText(request.getPassword(), "password 不能为空");
+        String elderRealName = normalizeRequiredText(request.getRealName(), "realName 不能为空");
+        String elderPhone = normalizeRequiredText(request.getPhone(), "phone 不能为空");
+        String familyRealName = normalizeRequiredText(request.getFamilyName(), "familyName 不能为空");
+        String familyPhone = normalizeRequiredText(request.getFamilyPhone(), "familyPhone 不能为空");
+        String familyUsername = familyPhone;
+
+        assertUsernameAvailable(elderUsername);
+        assertUsernameAvailable(familyUsername);
+
+        LocalDateTime now = LocalDateTime.now();
+
+        User elder = new User();
+        elder.setUsername(elderUsername);
+        elder.setPasswordHash(passwordEncoder.encode(elderPassword));
+        elder.setRole("elder");
+        elder.setStatus("active");
+        elder.setRealName(elderRealName);
+        elder.setPhone(elderPhone);
+        elder.setEmail(null);
+        elder.setAvatarUrl(null);
+        elder.setLastLoginAt(null);
+        elder.setCreatedAt(now);
+        elder.setUpdatedAt(now);
+        elder.setDeletedAt(null);
+        elder = userRepository.saveAndFlush(elder);
+
+        User family = new User();
+        family.setUsername(familyUsername);
+        family.setPasswordHash(passwordEncoder.encode(DEFAULT_FAMILY_PASSWORD));
+        family.setRole("family");
+        family.setStatus("active");
+        family.setRealName(familyRealName);
+        family.setPhone(familyPhone);
+        family.setEmail(null);
+        family.setAvatarUrl(null);
+        family.setLastLoginAt(null);
+        family.setCreatedAt(now);
+        family.setUpdatedAt(now);
+        family.setDeletedAt(null);
+        family = userRepository.saveAndFlush(family);
+
+        ElderProfileEntity elderProfile = new ElderProfileEntity();
+        elderProfile.setElderId(elder.getUserId());
+        elderProfile.setEmergencyContactName(familyRealName);
+        elderProfile.setEmergencyContactPhone(familyPhone);
+        elderProfile.setCreatedAt(now);
+        elderProfile.setUpdatedAt(now);
+        elderProfileRepository.saveAndFlush(elderProfile);
+
+        CareTeamAssignment assignment = new CareTeamAssignment();
+        assignment.setElderId(elder.getUserId());
+        assignment.setFamilyId(family.getUserId());
+        assignment.setIsActive(1);
+        assignment.setCreatedAt(now);
+        assignment.setUpdatedAt(now);
+        careTeamAssignmentRepository.saveAndFlush(assignment);
+
+        ElderWithFamilyCreateResponse response = new ElderWithFamilyCreateResponse();
+        response.setElder(UserAdminDTO.from(elder));
+        response.setFamily(UserAdminDTO.from(family));
+        return response;
+    }
+
+    @Transactional
     public UserAdminDTO update(Long userId, UpdateUserRequest request) {
         User user = findByIdOrThrow(userId);
 
         String username = normalizeOptionalText(request.getUsername());
         if (username != null && !username.equals(user.getUsername())) {
-            if (userRepository.existsByUsernameAndUserIdNotAndDeletedAtIsNull(username, userId)) {
+            if (userRepository.existsByUsernameAndUserIdNot(username, userId)) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "用户名已存在", HttpStatus.BAD_REQUEST);
             }
             user.setUsername(username);
@@ -149,6 +226,12 @@ public class UserAdminService {
     private User findByIdOrThrow(Long userId) {
         return userRepository.findByUserIdAndDeletedAtIsNull(userId)
                 .orElseThrow(() -> new NotFoundException("用户不存在"));
+    }
+
+    private void assertUsernameAvailable(String username) {
+        if (userRepository.existsByUsername(username)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "用户名已存在", HttpStatus.BAD_REQUEST);
+        }
     }
 
     private String normalizeRequiredText(String value, String emptyMessage) {

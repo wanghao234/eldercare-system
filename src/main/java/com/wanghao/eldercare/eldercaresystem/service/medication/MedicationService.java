@@ -114,7 +114,7 @@ public class MedicationService {
     public void deleteMedication(CurrentUser currentUser, Long id) {
         requireCatalogManager(currentUser);
         Medication medication = medicationRepository.findById(id).orElseThrow(() -> new NotFoundException("药品不存在"));
-        if (medicationPlanRepository.existsByMedicationId(id)) {
+        if (medicationPlanRepository.findAll().stream().anyMatch(plan -> planReferencesMedication(plan, id))) {
             throw badRequest("药品已被用药计划引用，不能删除");
         }
         medicationRepository.delete(medication);
@@ -161,19 +161,17 @@ public class MedicationService {
         requirePlanWriter(currentUser);
         permissionService.assertCanAccessElder(currentUser, request.getElderId());
 
-        Medication medication = medicationRepository.findById(request.getMedicationId())
-                .orElseThrow(() -> new NotFoundException("药品不存在"));
-
-        List<String> normalizedTimes = validateAndNormalizeTimes(request.getTimes());
+        List<PlanMedicationItem> items = validateAndBuildPlanItems(request.getMedicationItems(),
+                request.getMedicationId(),
+                request.getDosage(),
+                request.getFrequency(),
+                request.getTimes());
         validateDateRange(request.getStartDate(), request.getEndDate());
 
         LocalDateTime now = LocalDateTime.now();
         MedicationPlan plan = new MedicationPlan();
+        applyPlanItems(plan, items);
         plan.setElderId(request.getElderId());
-        plan.setMedicationId(request.getMedicationId());
-        plan.setDosage(request.getDosage());
-        plan.setFrequency(normalizeSimple(request.getFrequency()));
-        plan.setTimesJson(writeJson(normalizedTimes));
         plan.setStartDate(request.getStartDate());
         plan.setEndDate(request.getEndDate());
         plan.setStatus("active");
@@ -182,7 +180,7 @@ public class MedicationService {
         plan.setUpdatedAt(now);
 
         MedicationPlan saved = medicationPlanRepository.save(plan);
-        createMedicationTasksForPlan(saved, medication.getMedicationName(), currentUser.getUserId());
+        createMedicationTasksForPlan(saved, currentUser.getUserId());
         return toPlanDTO(saved);
     }
 
@@ -197,16 +195,14 @@ public class MedicationService {
             throw badRequest("已结束的用药计划不可编辑");
         }
 
-        medicationRepository.findById(request.getMedicationId())
-                .orElseThrow(() -> new NotFoundException("药品不存在"));
-
-        List<String> normalizedTimes = validateAndNormalizeTimes(request.getTimes());
+        List<PlanMedicationItem> items = validateAndBuildPlanItems(request.getMedicationItems(),
+                request.getMedicationId(),
+                request.getDosage(),
+                request.getFrequency(),
+                request.getTimes());
         validateDateRange(request.getStartDate(), request.getEndDate());
 
-        plan.setMedicationId(request.getMedicationId());
-        plan.setDosage(request.getDosage());
-        plan.setFrequency(normalizeSimple(request.getFrequency()));
-        plan.setTimesJson(writeJson(normalizedTimes));
+        applyPlanItems(plan, items);
         plan.setStartDate(request.getStartDate());
         plan.setEndDate(request.getEndDate());
         plan.setUpdatedAt(LocalDateTime.now());
@@ -294,7 +290,7 @@ public class MedicationService {
             if (!plan.getElderId().equals(request.getElderId())) {
                 throw badRequest("planId与elderId不匹配");
             }
-            if (!plan.getMedicationId().equals(request.getMedicationId())) {
+            if (!planReferencesMedication(plan, request.getMedicationId())) {
                 throw badRequest("planId与medicationId不匹配");
             }
         }
@@ -318,9 +314,9 @@ public class MedicationService {
         return toRecordDTO(saved);
     }
 
-    private void createMedicationTasksForPlan(MedicationPlan plan, String medicationName, Long actorId) {
-        List<String> times = parseTimesJson(plan.getTimesJson());
-        if (times.isEmpty()) {
+    private void createMedicationTasksForPlan(MedicationPlan plan, Long actorId) {
+        List<PlanMedicationItem> items = parsePlanItems(plan);
+        if (items.isEmpty()) {
             return;
         }
 
@@ -338,27 +334,29 @@ public class MedicationService {
 
         LocalDate date = fromDate;
         while (!date.isAfter(endDate)) {
-            for (String time : times) {
-                LocalTime lt = LocalTime.parse(time, HH_MM);
-                LocalDateTime dueAt = LocalDateTime.of(date, lt);
-                if (dueAt.isBefore(LocalDateTime.now().minusMinutes(1))) {
-                    continue;
+            for (PlanMedicationItem item : items) {
+                for (String time : item.getTimes()) {
+                    LocalTime lt = LocalTime.parse(time, HH_MM);
+                    LocalDateTime dueAt = LocalDateTime.of(date, lt);
+                    if (dueAt.isBefore(LocalDateTime.now().minusMinutes(1))) {
+                        continue;
+                    }
+                    Task task = new Task();
+                    task.setElderId(plan.getElderId());
+                    task.setTaskType("medication");
+                    task.setTitle("给药：" + item.getMedicationName() + " " + item.getDosage() + "（" + time + "）");
+                    task.setDescription("频次: " + item.getFrequency());
+                    task.setPriority("high");
+                    task.setStatus("pending");
+                    task.setDueAt(dueAt);
+                    task.setAssignedTo(assignedTo);
+                    task.setCreatedBy(actorId);
+                    task.setRelatedBizType("med_plan");
+                    task.setRelatedBizId(plan.getPlanId());
+                    task.setCreatedAt(LocalDateTime.now());
+                    task.setUpdatedAt(LocalDateTime.now());
+                    taskRepository.save(task);
                 }
-                Task task = new Task();
-                task.setElderId(plan.getElderId());
-                task.setTaskType("medication");
-                task.setTitle("给药：" + medicationName + " " + plan.getDosage() + "（" + time + "）");
-                task.setDescription("频次: " + plan.getFrequency());
-                task.setPriority("high");
-                task.setStatus("pending");
-                task.setDueAt(dueAt);
-                task.setAssignedTo(assignedTo);
-                task.setCreatedBy(actorId);
-                task.setRelatedBizType("med_plan");
-                task.setRelatedBizId(plan.getPlanId());
-                task.setCreatedAt(LocalDateTime.now());
-                task.setUpdatedAt(LocalDateTime.now());
-                taskRepository.save(task);
             }
             date = date.plusDays(1);
         }
@@ -413,12 +411,22 @@ public class MedicationService {
 
     private MedicationPlanDTO toPlanDTO(MedicationPlan plan) {
         MedicationPlanDTO dto = new MedicationPlanDTO();
+        List<PlanMedicationItem> items = parsePlanItems(plan);
         dto.setPlanId(plan.getPlanId());
         dto.setElderId(plan.getElderId());
-        dto.setMedicationId(plan.getMedicationId());
-        dto.setDosage(plan.getDosage());
-        dto.setFrequency(plan.getFrequency());
-        dto.setTimes(parseTimesJson(plan.getTimesJson()));
+        dto.setMedicationItems(items.stream().map(this::toMedicationPlanItemDTO).toList());
+        if (!items.isEmpty()) {
+            PlanMedicationItem first = items.get(0);
+            dto.setMedicationId(first.getMedicationId());
+            dto.setDosage(first.getDosage());
+            dto.setFrequency(first.getFrequency());
+            dto.setTimes(first.getTimes());
+        } else {
+            dto.setMedicationId(plan.getMedicationId());
+            dto.setDosage(plan.getDosage());
+            dto.setFrequency(plan.getFrequency());
+            dto.setTimes(parseTimesJson(plan.getTimesJson()));
+        }
         dto.setStartDate(plan.getStartDate());
         dto.setEndDate(plan.getEndDate());
         dto.setStatus(plan.getStatus());
@@ -463,6 +471,49 @@ public class MedicationService {
             }
         }
         return normalized;
+    }
+
+    private List<PlanMedicationItem> validateAndBuildPlanItems(List<MedicationPlanItemRequest> medicationItems,
+                                                               Long legacyMedicationId,
+                                                               String legacyDosage,
+                                                               String legacyFrequency,
+                                                               List<String> legacyTimes) {
+        List<MedicationPlanItemRequest> sourceItems = medicationItems;
+        if (sourceItems == null || sourceItems.isEmpty()) {
+            if (legacyMedicationId == null || legacyDosage == null || legacyFrequency == null
+                    || legacyTimes == null || legacyTimes.isEmpty()) {
+                throw badRequest("medicationItems不能为空");
+            }
+            MedicationPlanItemRequest legacy = new MedicationPlanItemRequest();
+            legacy.setMedicationId(legacyMedicationId);
+            legacy.setDosage(legacyDosage);
+            legacy.setFrequency(legacyFrequency);
+            legacy.setTimes(legacyTimes);
+            sourceItems = List.of(legacy);
+        }
+
+        List<PlanMedicationItem> normalized = new ArrayList<>();
+        for (MedicationPlanItemRequest item : sourceItems) {
+            Medication medication = medicationRepository.findById(item.getMedicationId())
+                    .orElseThrow(() -> new NotFoundException("药品不存在"));
+            PlanMedicationItem normalizedItem = new PlanMedicationItem();
+            normalizedItem.setMedicationId(item.getMedicationId());
+            normalizedItem.setMedicationName(medication.getMedicationName());
+            normalizedItem.setDosage(item.getDosage().trim());
+            normalizedItem.setFrequency(normalizeSimple(item.getFrequency()));
+            normalizedItem.setTimes(validateAndNormalizeTimes(item.getTimes()));
+            normalized.add(normalizedItem);
+        }
+        return normalized;
+    }
+
+    private void applyPlanItems(MedicationPlan plan, List<PlanMedicationItem> items) {
+        PlanMedicationItem first = items.get(0);
+        plan.setMedicationId(first.getMedicationId());
+        plan.setDosage(first.getDosage());
+        plan.setFrequency(first.getFrequency());
+        plan.setTimesJson(writeJson(first.getTimes()));
+        plan.setMedicationsJson(writeJson(items));
     }
 
     private void validatePlanTransition(String from, String to) {
@@ -541,6 +592,97 @@ public class MedicationService {
             });
         } catch (JsonProcessingException e) {
             throw badRequest("times_json解析失败");
+        }
+    }
+
+    private List<PlanMedicationItem> parsePlanItems(MedicationPlan plan) {
+        String medicationsJson = plan.getMedicationsJson();
+        if (medicationsJson != null && !medicationsJson.isBlank()) {
+            try {
+                return objectMapper.readValue(medicationsJson, new TypeReference<>() {
+                });
+            } catch (JsonProcessingException e) {
+                throw badRequest("medications_json解析失败");
+            }
+        }
+
+        if (plan.getMedicationId() == null) {
+            return List.of();
+        }
+        PlanMedicationItem legacy = new PlanMedicationItem();
+        legacy.setMedicationId(plan.getMedicationId());
+        legacy.setMedicationName(resolveMedicationName(plan.getMedicationId()));
+        legacy.setDosage(plan.getDosage());
+        legacy.setFrequency(plan.getFrequency());
+        legacy.setTimes(parseTimesJson(plan.getTimesJson()));
+        return List.of(legacy);
+    }
+
+    private MedicationPlanItemDTO toMedicationPlanItemDTO(PlanMedicationItem item) {
+        MedicationPlanItemDTO dto = new MedicationPlanItemDTO();
+        dto.setMedicationId(item.getMedicationId());
+        dto.setMedicationName(item.getMedicationName());
+        dto.setDosage(item.getDosage());
+        dto.setFrequency(item.getFrequency());
+        dto.setTimes(item.getTimes());
+        return dto;
+    }
+
+    private boolean planReferencesMedication(MedicationPlan plan, Long medicationId) {
+        return parsePlanItems(plan).stream().anyMatch(item -> medicationId.equals(item.getMedicationId()));
+    }
+
+    private String resolveMedicationName(Long medicationId) {
+        return medicationRepository.findById(medicationId)
+                .map(Medication::getMedicationName)
+                .orElse(String.valueOf(medicationId));
+    }
+
+    private static class PlanMedicationItem {
+        private Long medicationId;
+        private String medicationName;
+        private String dosage;
+        private String frequency;
+        private List<String> times;
+
+        public Long getMedicationId() {
+            return medicationId;
+        }
+
+        public void setMedicationId(Long medicationId) {
+            this.medicationId = medicationId;
+        }
+
+        public String getMedicationName() {
+            return medicationName;
+        }
+
+        public void setMedicationName(String medicationName) {
+            this.medicationName = medicationName;
+        }
+
+        public String getDosage() {
+            return dosage;
+        }
+
+        public void setDosage(String dosage) {
+            this.dosage = dosage;
+        }
+
+        public String getFrequency() {
+            return frequency;
+        }
+
+        public void setFrequency(String frequency) {
+            this.frequency = frequency;
+        }
+
+        public List<String> getTimes() {
+            return times;
+        }
+
+        public void setTimes(List<String> times) {
+            this.times = times;
         }
     }
 

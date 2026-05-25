@@ -43,7 +43,7 @@ public class ElderProfileController {
         this.currentUserUtils = currentUserUtils;
     }
 
-    @GetMapping("/{elderId}")
+    @GetMapping("/{elderId:\\d+}")
     @Audited(action = AuditAction.VIEW_SENSITIVE, entityType = "elder_profile", entityIdArg = "elderId", sensitive = true)
     public ApiResponse<ElderProfileDTO> getByElderId(@PathVariable Long elderId,
                                                      @RequestParam(defaultValue = "false") boolean includeSensitive) {
@@ -51,7 +51,7 @@ public class ElderProfileController {
         return ApiResponse.ok(profileService.getElderProfile(currentUser, elderId, includeSensitive));
     }
 
-    @PutMapping("/{elderId}")
+    @PutMapping("/{elderId:\\d+}")
     @Audited(action = AuditAction.UPDATE, entityType = "elder_profile", entityIdArg = "elderId",
             requestFields = {"gender", "birthday", "idNumber", "address", "emergencyContactName",
                     "emergencyContactPhone", "allergies", "chronicConditions", "dietTaboo", "careLevel",
@@ -71,5 +71,15 @@ public class ElderProfileController {
                                                                            @RequestParam(defaultValue = "20") int size) {
         CurrentUser currentUser = currentUserUtils.getCurrentUser();
         return ApiResponse.ok(profileService.listElderProfiles(currentUser, keyword, careLevel, status, page, size));
+    }
+
+    @GetMapping("/bindings")
+    public ApiResponse<ProfilePageResponse<ElderProfileListItemDTO>> listBindings(@RequestParam(required = false) String keyword,
+                                                                                   @RequestParam(required = false) String careLevel,
+                                                                                   @RequestParam(required = false) String status,
+                                                                                   @RequestParam(defaultValue = "0") int page,
+                                                                                   @RequestParam(defaultValue = "20") int size) {
+        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        return ApiResponse.ok(profileService.listBoundElderProfiles(currentUser, keyword, careLevel, status, page, size));
     }
 }

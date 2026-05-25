@@ -13,6 +13,11 @@ public class CarePlanListItemDTO {
     private Integer carePlanVersion;
     private String carePlanStatus;
     private String careTime;
+    private String careLevel;
+    private String dailyCare;
+    private String medicationCare;
+    private String executionFrequency;
+    private String dietPlan;
     private LocalDate startDate;
     private LocalDate endDate;
     private LocalDateTime planUpdatedAt;
@@ -20,6 +25,11 @@ public class CarePlanListItemDTO {
     private String pendingChangeStatus;
     private String pendingChangeType;
     private boolean requiresDoctorReview;
+    private String admissionStatus;
+    private boolean inResidence;
+    private boolean canCreateCarePlan;
+    private boolean canSubmitCarePlan;
+    private boolean canChangeCarePlan;
 
     public Long getElderId() {
         return elderId;
@@ -93,6 +103,46 @@ public class CarePlanListItemDTO {
         this.careTime = careTime;
     }
 
+    public String getCareLevel() {
+        return careLevel;
+    }
+
+    public void setCareLevel(String careLevel) {
+        this.careLevel = careLevel;
+    }
+
+    public String getDailyCare() {
+        return dailyCare;
+    }
+
+    public void setDailyCare(String dailyCare) {
+        this.dailyCare = dailyCare;
+    }
+
+    public String getMedicationCare() {
+        return medicationCare;
+    }
+
+    public void setMedicationCare(String medicationCare) {
+        this.medicationCare = medicationCare;
+    }
+
+    public String getExecutionFrequency() {
+        return executionFrequency;
+    }
+
+    public void setExecutionFrequency(String executionFrequency) {
+        this.executionFrequency = executionFrequency;
+    }
+
+    public String getDietPlan() {
+        return dietPlan;
+    }
+
+    public void setDietPlan(String dietPlan) {
+        this.dietPlan = dietPlan;
+    }
+
     public LocalDate getStartDate() {
         return startDate;
     }
@@ -147,5 +197,45 @@ public class CarePlanListItemDTO {
 
     public void setRequiresDoctorReview(boolean requiresDoctorReview) {
         this.requiresDoctorReview = requiresDoctorReview;
+    }
+
+    public String getAdmissionStatus() {
+        return admissionStatus;
+    }
+
+    public void setAdmissionStatus(String admissionStatus) {
+        this.admissionStatus = admissionStatus;
+    }
+
+    public boolean isInResidence() {
+        return inResidence;
+    }
+
+    public void setInResidence(boolean inResidence) {
+        this.inResidence = inResidence;
+    }
+
+    public boolean isCanCreateCarePlan() {
+        return canCreateCarePlan;
+    }
+
+    public void setCanCreateCarePlan(boolean canCreateCarePlan) {
+        this.canCreateCarePlan = canCreateCarePlan;
+    }
+
+    public boolean isCanSubmitCarePlan() {
+        return canSubmitCarePlan;
+    }
+
+    public void setCanSubmitCarePlan(boolean canSubmitCarePlan) {
+        this.canSubmitCarePlan = canSubmitCarePlan;
+    }
+
+    public boolean isCanChangeCarePlan() {
+        return canChangeCarePlan;
+    }
+
+    public void setCanChangeCarePlan(boolean canChangeCarePlan) {
+        this.canChangeCarePlan = canChangeCarePlan;
     }
 }

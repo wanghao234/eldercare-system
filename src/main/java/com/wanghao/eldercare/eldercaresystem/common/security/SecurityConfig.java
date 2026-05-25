@@ -60,6 +60,8 @@ public class SecurityConfig {
                 )
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/login", "/error").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/alarm-files/upload").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/alarms").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().permitAll()

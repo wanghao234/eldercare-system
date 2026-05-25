@@ -38,7 +38,8 @@ import org.springframework.web.bind.annotation.*;
 @PreAuthorize("hasAnyAuthority(T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_ADMIN,"
         + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE_LEADER,"
         + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_NURSE,"
-        + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_CAREGIVER)")
+        + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_CAREGIVER,"
+        + "T(com.wanghao.eldercare.eldercaresystem.common.security.Role).ROLE_DOCTOR)")
 public class AlarmController {
 
     private final AlarmService alarmService;
@@ -54,10 +55,10 @@ public class AlarmController {
     }
 
     @PostMapping
-    @RequirePerm("alarm:handle")
+    @PreAuthorize("permitAll()")
     @Audited(action = AuditAction.CREATE, entityType = "alarms", responseIdPath = "alarmId", requestFields = {"elderId", "alarmType", "severity", "source", "locationText"})
     public ApiResponse<AlarmCreateResponse> create(@Valid @RequestBody CreateAlarmRequest request) {
-        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        CurrentUser currentUser = currentUserUtils.getCurrentUserOrSystem();
         return ApiResponse.success(alarmService.createAlarm(currentUser, request));
     }
 
@@ -111,6 +112,16 @@ public class AlarmController {
                                              @Valid @RequestBody CloseAlarmRequest request) {
         CurrentUser currentUser = currentUserUtils.getCurrentUser();
         return ApiResponse.success(alarmService.closeAlarm(currentUser, alarmId, request));
+    }
+
+    @PostMapping("/{alarmId}/bind-elder")
+    @RequirePerm("alarm:handle")
+    @Audited(action = AuditAction.UPDATE, entityType = "alarms", entityIdArg = "alarmId", requestFields = {"elderId", "note"})
+    @BizScoped(type = "alarm", idParam = "alarmId")
+    public ApiResponse<AlarmDetailDTO> bindElder(@PathVariable Long alarmId,
+                                                 @Valid @RequestBody BindAlarmElderRequest request) {
+        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        return ApiResponse.success(alarmService.bindAlarmElder(currentUser, alarmId, request));
     }
 
     @PostMapping("/{alarmId}/rectifications")

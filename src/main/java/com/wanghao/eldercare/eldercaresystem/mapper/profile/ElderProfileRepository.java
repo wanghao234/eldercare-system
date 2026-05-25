@@ -22,6 +22,7 @@ import org.springframework.data.repository.query.Param;
 public interface ElderProfileRepository extends JpaRepository<ElderProfileEntity, Long> {
 
     List<ElderProfileEntity> findByElderIdIn(Collection<Long> elderIds);
+    java.util.Optional<ElderProfileEntity> findFirstByIdNumber(String idNumber);
 
     @Query("""
             SELECT e.elderId FROM ElderProfileEntity e

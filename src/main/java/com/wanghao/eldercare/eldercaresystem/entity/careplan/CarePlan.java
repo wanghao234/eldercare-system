@@ -45,6 +45,9 @@ public class CarePlan {
     @Column(name = "end_date")
     private LocalDate endDate;
 
+    @Column(name = "care_level", length = 32)
+    private String careLevel;
+
     @Column(name = "care_time", length = 64)
     private String careTime;
 
@@ -56,6 +59,45 @@ public class CarePlan {
 
     @Column(name = "diet_plan", columnDefinition = "TEXT")
     private String dietPlan;
+
+    @Column(name = "health_assessment", columnDefinition = "TEXT")
+    private String healthAssessment;
+
+    @Column(name = "nursing_problem", columnDefinition = "TEXT")
+    private String nursingProblem;
+
+    @Column(name = "risk_tags", length = 255)
+    private String riskTags;
+
+    @Column(name = "nursing_goal", columnDefinition = "TEXT")
+    private String nursingGoal;
+
+    @Column(name = "daily_care", columnDefinition = "TEXT")
+    private String dailyCare;
+
+    @Column(name = "medication_care", columnDefinition = "TEXT")
+    private String medicationCare;
+
+    @Column(name = "health_monitoring", columnDefinition = "TEXT")
+    private String healthMonitoring;
+
+    @Column(name = "rehabilitation_activity", columnDefinition = "TEXT")
+    private String rehabilitationActivity;
+
+    @Column(name = "psychological_care", columnDefinition = "TEXT")
+    private String psychologicalCare;
+
+    @Column(name = "safety_precaution", columnDefinition = "TEXT")
+    private String safetyPrecaution;
+
+    @Column(name = "execution_frequency", length = 128)
+    private String executionFrequency;
+
+    @Column(name = "evaluation", columnDefinition = "TEXT")
+    private String evaluation;
+
+    @Column(name = "ai_generated", nullable = false)
+    private Boolean aiGenerated;
 
     @Column(name = "created_by")
     private Long createdBy;
@@ -123,6 +165,14 @@ public class CarePlan {
         this.endDate = endDate;
     }
 
+    public String getCareLevel() {
+        return careLevel;
+    }
+
+    public void setCareLevel(String careLevel) {
+        this.careLevel = careLevel;
+    }
+
     public String getCareTime() {
         return careTime;
     }
@@ -153,6 +203,110 @@ public class CarePlan {
 
     public void setDietPlan(String dietPlan) {
         this.dietPlan = dietPlan;
+    }
+
+    public String getHealthAssessment() {
+        return healthAssessment;
+    }
+
+    public void setHealthAssessment(String healthAssessment) {
+        this.healthAssessment = healthAssessment;
+    }
+
+    public String getNursingProblem() {
+        return nursingProblem;
+    }
+
+    public void setNursingProblem(String nursingProblem) {
+        this.nursingProblem = nursingProblem;
+    }
+
+    public String getRiskTags() {
+        return riskTags;
+    }
+
+    public void setRiskTags(String riskTags) {
+        this.riskTags = riskTags;
+    }
+
+    public String getNursingGoal() {
+        return nursingGoal;
+    }
+
+    public void setNursingGoal(String nursingGoal) {
+        this.nursingGoal = nursingGoal;
+    }
+
+    public String getDailyCare() {
+        return dailyCare;
+    }
+
+    public void setDailyCare(String dailyCare) {
+        this.dailyCare = dailyCare;
+    }
+
+    public String getMedicationCare() {
+        return medicationCare;
+    }
+
+    public void setMedicationCare(String medicationCare) {
+        this.medicationCare = medicationCare;
+    }
+
+    public String getHealthMonitoring() {
+        return healthMonitoring;
+    }
+
+    public void setHealthMonitoring(String healthMonitoring) {
+        this.healthMonitoring = healthMonitoring;
+    }
+
+    public String getRehabilitationActivity() {
+        return rehabilitationActivity;
+    }
+
+    public void setRehabilitationActivity(String rehabilitationActivity) {
+        this.rehabilitationActivity = rehabilitationActivity;
+    }
+
+    public String getPsychologicalCare() {
+        return psychologicalCare;
+    }
+
+    public void setPsychologicalCare(String psychologicalCare) {
+        this.psychologicalCare = psychologicalCare;
+    }
+
+    public String getSafetyPrecaution() {
+        return safetyPrecaution;
+    }
+
+    public void setSafetyPrecaution(String safetyPrecaution) {
+        this.safetyPrecaution = safetyPrecaution;
+    }
+
+    public String getExecutionFrequency() {
+        return executionFrequency;
+    }
+
+    public void setExecutionFrequency(String executionFrequency) {
+        this.executionFrequency = executionFrequency;
+    }
+
+    public String getEvaluation() {
+        return evaluation;
+    }
+
+    public void setEvaluation(String evaluation) {
+        this.evaluation = evaluation;
+    }
+
+    public Boolean getAiGenerated() {
+        return aiGenerated;
+    }
+
+    public void setAiGenerated(Boolean aiGenerated) {
+        this.aiGenerated = aiGenerated;
     }
 
     public Long getCreatedBy() {

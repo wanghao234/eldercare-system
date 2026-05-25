@@ -13,6 +13,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -22,8 +23,10 @@ import org.springframework.validation.BindException;
 import org.springframework.validation.BindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 @RestControllerAdvice
@@ -42,6 +45,14 @@ public class GlobalExceptionHandler {
         writeFailAudit(request, ex.getCode(), ex.getMessage());
         return ResponseEntity.status(ex.getStatus())
                 .body(ApiResponse.error(ex.getCode(), ex.getMessage()));
+    }
+
+    @ExceptionHandler(ConflictBusinessException.class)
+    public ResponseEntity<ApiResponse<Object>> handleConflictBusinessException(ConflictBusinessException ex,
+                                                                               HttpServletRequest request) {
+        writeFailAudit(request, ex.getCode(), ex.getMessage());
+        return ResponseEntity.status(ex.getStatus())
+                .body(ApiResponse.fail(ex.getCode(), ex.getMessage(), ex.getData()));
     }
 
     @ExceptionHandler({MethodArgumentNotValidException.class, BindException.class})
@@ -65,11 +76,32 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(ErrorCode.BAD_REQUEST, message));
     }
 
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMethodArgumentTypeMismatch(MethodArgumentTypeMismatchException ex,
+                                                                              HttpServletRequest request) {
+        String message = "请求参数错误";
+        if (ex.getName() != null && !ex.getName().isBlank()) {
+            message = "请求参数错误: " + ex.getName();
+        }
+        writeFailAudit(request, ErrorCode.BAD_REQUEST, message);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(ErrorCode.BAD_REQUEST, message));
+    }
+
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiResponse<Void>> handleMessageNotReadable(HttpMessageNotReadableException ex, HttpServletRequest request) {
         writeFailAudit(request, ErrorCode.BAD_REQUEST, "请求体格式错误");
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error(ErrorCode.BAD_REQUEST, "请求体格式错误"));
+    }
+
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMissingServletRequestParameter(MissingServletRequestParameterException ex,
+                                                                                  HttpServletRequest request) {
+        String message = "缺少请求参数: " + ex.getParameterName();
+        writeFailAudit(request, ErrorCode.BAD_REQUEST, message);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(ErrorCode.BAD_REQUEST, message));
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
@@ -101,6 +133,18 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(ErrorCode.NOT_FOUND, message));
     }
 
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleDataIntegrityViolation(DataIntegrityViolationException ex,
+                                                                          HttpServletRequest request) {
+        String message = "数据约束冲突";
+        if (containsUsernameConflict(ex)) {
+            message = "用户名已存在";
+        }
+        writeFailAudit(request, ErrorCode.BAD_REQUEST, message);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(ErrorCode.BAD_REQUEST, message));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleServerError(Exception ex, HttpServletRequest request) {
         writeFailAudit(request, ErrorCode.SYSTEM_ERROR, "服务器内部错误");
@@ -130,5 +174,18 @@ public class GlobalExceptionHandler {
                 errorMessage,
                 null
         );
+    }
+
+    private boolean containsUsernameConflict(Throwable ex) {
+        Throwable current = ex;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null
+                    && message.contains("users.uk_users_username")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 }
