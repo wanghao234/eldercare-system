@@ -1,0 +1,86 @@
+spring:
+  application:
+    name: eldercare-system
+
+  datasource:
+    # 数据库连接地址，根据自己的 MySQL 地址和数据库名修改
+    url: jdbc:mysql://127.0.0.1:3306/smart_nursing_home?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: your_mysql_username
+    password: your_mysql_password
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  jackson:
+    time-zone: Asia/Shanghai
+
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+
+server:
+  port: 8080
+
+
+jwt:
+  # 请在本地 application.yml 中替换为足够长、随机、不可公开的密钥
+  secret: "please-change-this-jwt-secret-in-local-config"
+  expirationSeconds: 7200
+  issuer: "eldercare-system"
+
+
+security:
+  auth:
+    block-family-elder-login: true
+    block-elder-login: false
+
+
+file:
+  # 本地上传文件目录，生产环境建议改为服务器固定目录或对象存储
+  storage-dir: uploads
+  max-size-bytes: 10485760
+  allowed-extensions:
+    - png
+    - jpg
+    - jpeg
+    - pdf
+    - docx
+
+
+deepseek:
+  # 不要在配置文件中写真实 API Key
+  # 本地运行前请在系统环境变量中配置 DEEPSEEK_API_KEY
+  api-key: ${DEEPSEEK_API_KEY:your_deepseek_api_key}
+  base-url: https://api.deepseek.com
+  model: deepseek-chat
+  mock-enabled: false
+
+
+ai:
+  # 通用 AI 配置，不要写真实 API Key
+  api-key: ${AI_API_KEY:your_ai_api_key}
+  base-url: ${AI_BASE_URL:https://api.deepseek.com}
+  model: ${AI_MODEL:deepseek-chat}
+
+
+speech:
+  mock-enabled: false
+  provider: tencent
+  ffmpeg-path: ffmpeg
+
+  tencent:
+    # 不要写真实腾讯云 SecretId / SecretKey
+    # 本地运行前请配置环境变量：
+    # TENCENT_SPEECH_SECRET_ID
+    # TENCENT_SPEECH_SECRET_KEY
+    secret-id: ${TENCENT_SPEECH_SECRET_ID:your_tencent_secret_id}
+    secret-key: ${TENCENT_SPEECH_SECRET_KEY:your_tencent_secret_key}
+    region: ap-guangzhou
