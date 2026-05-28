@@ -41,7 +41,7 @@ public class AuthService {
                        PasswordEncoder passwordEncoder,
                        JwtTokenProvider jwtTokenProvider,
                        PermissionPointService permissionPointService,
-                       @Value("${security.auth.block-family-elder-login:true}") boolean blockFamilyLogin,
+                       @Value("${security.auth.block-family-elder-login:false}") boolean blockFamilyLogin,
                        @Value("${security.auth.block-elder-login:false}") boolean blockElderLogin) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;

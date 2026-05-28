@@ -39,7 +39,7 @@ jwt:
 
 security:
   auth:
-    block-family-elder-login: true
+    block-family-elder-login: false
     block-elder-login: false
 
 
