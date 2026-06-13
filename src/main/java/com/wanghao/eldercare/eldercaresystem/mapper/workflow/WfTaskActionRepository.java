@@ -16,4 +16,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface WfTaskActionRepository extends JpaRepository<WfTaskAction, Long> {
     List<WfTaskAction> findByWfTaskIdOrderByActionTimeAsc(Long wfTaskId);
+
+    List<WfTaskAction> findByInstanceIdOrderByActionTimeAsc(Long instanceId);
 }

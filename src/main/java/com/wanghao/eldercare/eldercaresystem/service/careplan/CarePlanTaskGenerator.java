@@ -68,8 +68,9 @@ public class CarePlanTaskGenerator {
     private List<Task> generateTasks(CarePlan plan, Long operatorId, int days, LocalDateTime now) {
         JsonNode root = readJson(plan.getPlanContentJson());
         LocalDate today = now.toLocalDate();
-        LocalDate startDate = maxDate(today, parseDate(root.path("startDate").asText(null)));
-        LocalDate endDate = parseDate(root.path("endDate").asText(null));
+        LocalDate planStartDate = plan.getStartDate();
+        LocalDate startDate = maxDate(today, planStartDate == null ? parseDate(root.path("startDate").asText(null)) : planStartDate);
+        LocalDate endDate = plan.getEndDate() == null ? parseDate(root.path("endDate").asText(null)) : plan.getEndDate();
         LocalDate rangeEnd = today.plusDays(days - 1L);
         if (endDate != null && endDate.isBefore(rangeEnd)) {
             rangeEnd = endDate;

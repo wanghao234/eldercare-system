@@ -32,6 +32,9 @@ public class WfTask {
     @Column(name = "instance_id", nullable = false)
     private Long instanceId;
 
+    @Column(name = "external_task_id", length = 128)
+    private String externalTaskId;
+
     @Column(name = "node_key", nullable = false, length = 64)
     private String nodeKey;
 
@@ -46,6 +49,9 @@ public class WfTask {
 
     @Column(name = "status", nullable = false, length = 32)
     private String status;
+
+    @Column(name = "priority")
+    private Integer priority;
 
     @Column(name = "due_at")
     private LocalDateTime dueAt;
@@ -72,6 +78,8 @@ public class WfTask {
     public void setWfTaskId(Long wfTaskId) { this.wfTaskId = wfTaskId; }
     public Long getInstanceId() { return instanceId; }
     public void setInstanceId(Long instanceId) { this.instanceId = instanceId; }
+    public String getExternalTaskId() { return externalTaskId; }
+    public void setExternalTaskId(String externalTaskId) { this.externalTaskId = externalTaskId; }
     public String getNodeKey() { return nodeKey; }
     public void setNodeKey(String nodeKey) { this.nodeKey = nodeKey; }
     public String getTaskName() { return taskName; }
@@ -82,6 +90,8 @@ public class WfTask {
     public void setCandidateRole(String candidateRole) { this.candidateRole = candidateRole; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public Integer getPriority() { return priority; }
+    public void setPriority(Integer priority) { this.priority = priority; }
     public LocalDateTime getDueAt() { return dueAt; }
     public void setDueAt(LocalDateTime dueAt) { this.dueAt = dueAt; }
     public LocalDateTime getClaimedAt() { return claimedAt; }

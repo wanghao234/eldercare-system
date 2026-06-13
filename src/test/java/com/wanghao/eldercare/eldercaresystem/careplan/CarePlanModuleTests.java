@@ -69,6 +69,9 @@ class CarePlanModuleTests {
     private TaskRepository taskRepository;
 
     @Autowired
+    private CarePlanTaskRepository carePlanTaskRepository;
+
+    @Autowired
     private PasswordEncoder passwordEncoder;
 
     @Autowired
@@ -80,6 +83,7 @@ class CarePlanModuleTests {
     @BeforeEach
     void setUp() {
         taskRepository.deleteAll();
+        carePlanTaskRepository.deleteAll();
         carePlanChangeRepository.deleteAll();
         carePlanRepository.deleteAll();
         admissionRecordRepository.deleteAll();
@@ -285,6 +289,126 @@ class CarePlanModuleTests {
     }
 
     @Test
+    void create_care_plan_generates_legacy_tasks_through_selected_end_date() throws Exception {
+        User elder = createUser("elderCPRange", "elder");
+        User nurse = createUser("nurseCPRange", "nurse");
+        createUser("adminCPRange", "admin");
+        bindNurse(elder.getUserId(), nurse.getUserId());
+        createActiveAdmission(elder.getUserId(), nurse.getUserId());
+
+        String adminToken = loginAndGetToken("adminCPRange", "123456");
+        MvcResult result = mockMvc.perform(post("/api/care-plans")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "elderId": %d,
+                                  "version": 1,
+                                  "startDate": "2026-06-09",
+                                  "endDate": "2026-06-16",
+                                  "careTime": "每日护理",
+                                  "careContent": "{\\"items\\":[{\\"type\\":\\"care\\",\\"title\\":\\"基础护理\\",\\"times\\":[\\"09:00\\"],\\"priority\\":\\"normal\\",\\"notes\\":\\"AI生成护理计划任务\\"}]}"
+                                }
+                                """.formatted(elder.getUserId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andReturn();
+
+        JsonNode response = objectMapper.readTree(result.getResponse().getContentAsString(StandardCharsets.UTF_8));
+        Long carePlanId = response.path("data").path("carePlanId").asLong();
+        List<Task> tasks = taskRepository.findByRelatedBizTypeAndRelatedBizId("care_plan", carePlanId);
+
+        assertThat(tasks).extracting(task -> task.getDueAt().toLocalDate())
+                .containsExactly(
+                        LocalDate.of(2026, 6, 9),
+                        LocalDate.of(2026, 6, 10),
+                        LocalDate.of(2026, 6, 11),
+                        LocalDate.of(2026, 6, 12),
+                        LocalDate.of(2026, 6, 13),
+                        LocalDate.of(2026, 6, 14),
+                        LocalDate.of(2026, 6, 15),
+                        LocalDate.of(2026, 6, 16));
+
+        List<CarePlanTask> carePlanTasks = carePlanTaskRepository.findAllByCarePlanIdOrderByScheduledAtAscCreatedAtAscTaskIdAsc(carePlanId);
+        assertThat(carePlanTasks).extracting(CarePlanTask::getScheduledDate)
+                .containsExactly(
+                        LocalDate.of(2026, 6, 9),
+                        LocalDate.of(2026, 6, 10),
+                        LocalDate.of(2026, 6, 11),
+                        LocalDate.of(2026, 6, 12),
+                        LocalDate.of(2026, 6, 13),
+                        LocalDate.of(2026, 6, 14),
+                        LocalDate.of(2026, 6, 15),
+                        LocalDate.of(2026, 6, 16));
+    }
+
+    @Test
+    void update_care_plan_regenerates_draft_care_plan_tasks_through_new_end_date() throws Exception {
+        User elder = createUser("elderCPRangeUpdate", "elder");
+        User nurse = createUser("nurseCPRangeUpdate", "nurse");
+        createUser("adminCPRangeUpdate", "admin");
+        bindNurse(elder.getUserId(), nurse.getUserId());
+        createActiveAdmission(elder.getUserId(), nurse.getUserId());
+
+        String adminToken = loginAndGetToken("adminCPRangeUpdate", "123456");
+        MvcResult createResult = mockMvc.perform(post("/api/care-plans")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "elderId": %d,
+                                  "version": 1,
+                                  "startDate": "2026-06-09",
+                                  "endDate": "2026-06-13",
+                                  "careTime": "每日护理",
+                                  "careContent": "基础护理"
+                                }
+                                """.formatted(elder.getUserId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andReturn();
+
+        Long carePlanId = objectMapper.readTree(createResult.getResponse().getContentAsString(StandardCharsets.UTF_8))
+                .path("data").path("carePlanId").asLong();
+        assertThat(carePlanTaskRepository.findAllByCarePlanIdOrderByScheduledAtAscCreatedAtAscTaskIdAsc(carePlanId))
+                .extracting(CarePlanTask::getScheduledDate)
+                .containsExactly(
+                        LocalDate.of(2026, 6, 9),
+                        LocalDate.of(2026, 6, 10),
+                        LocalDate.of(2026, 6, 11),
+                        LocalDate.of(2026, 6, 12),
+                        LocalDate.of(2026, 6, 13));
+
+        mockMvc.perform(put("/api/care-plans/{id}", carePlanId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "elderId": %d,
+                                  "version": 1,
+                                  "startDate": "2026-06-09",
+                                  "endDate": "2026-06-16",
+                                  "careTime": "每日护理",
+                                  "careContent": "基础护理"
+                                }
+                                """.formatted(elder.getUserId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"));
+
+        assertThat(carePlanTaskRepository.findAllByCarePlanIdOrderByScheduledAtAscCreatedAtAscTaskIdAsc(carePlanId))
+                .extracting(CarePlanTask::getScheduledDate)
+                .containsExactly(
+                        LocalDate.of(2026, 6, 9),
+                        LocalDate.of(2026, 6, 10),
+                        LocalDate.of(2026, 6, 11),
+                        LocalDate.of(2026, 6, 12),
+                        LocalDate.of(2026, 6, 13),
+                        LocalDate.of(2026, 6, 14),
+                        LocalDate.of(2026, 6, 15),
+                        LocalDate.of(2026, 6, 16));
+    }
+
+    @Test
     void nurse_approve_non_visible_elder_change_returns_40301() throws Exception {
         User elder = createUser("elderCP3", "elder");
         createUser("leader3", "nurse_leader");
@@ -487,6 +611,47 @@ class CarePlanModuleTests {
                 .andExpect(jsonPath("$.code").value("0"));
 
         assertThat(carePlanRepository.findById(planId)).isEmpty();
+    }
+
+    @Test
+    void delete_care_plan_removes_draft_care_plan_tasks() throws Exception {
+        User elder = createUser("elderDeleteDraftTasks", "elder");
+        User nurse = createUser("nurseDeleteDraftTasks", "nurse");
+        bindNurse(elder.getUserId(), nurse.getUserId());
+        createActiveAdmission(elder.getUserId(), nurse.getUserId());
+        String nurseToken = loginAndGetToken("nurseDeleteDraftTasks", "123456");
+
+        MvcResult createResult = mockMvc.perform(post("/api/care-plans")
+                        .header("Authorization", "Bearer " + nurseToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "elderId": %d,
+                                  "startDate": "2026-06-09",
+                                  "endDate": "2026-06-10",
+                                  "careTime": "每天09:00",
+                                  "careContent": "巡房观察",
+                                  "medicationReminder": "早餐后服药",
+                                  "dietPlan": "低盐"
+                                }
+                                """.formatted(elder.getUserId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"))
+                .andReturn();
+
+        Long planId = objectMapper.readTree(createResult.getResponse().getContentAsString(StandardCharsets.UTF_8))
+                .path("data").path("carePlanId").asLong();
+        assertThat(carePlanTaskRepository.findAllByCarePlanIdOrderByScheduledAtAscCreatedAtAscTaskIdAsc(planId))
+                .isNotEmpty()
+                .allMatch(task -> "draft".equalsIgnoreCase(task.getStatus()));
+
+        mockMvc.perform(delete("/api/care-plans/{id}", planId)
+                        .header("Authorization", "Bearer " + nurseToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("0"));
+
+        assertThat(carePlanTaskRepository.findAllByCarePlanIdOrderByScheduledAtAscCreatedAtAscTaskIdAsc(planId))
+                .isEmpty();
     }
 
     @Test

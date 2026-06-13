@@ -25,10 +25,26 @@ public class CreateWfInstanceRequest {
     @NotNull(message = "bizId 不能为空")
     private Long bizId;
 
+    private Long elderId;
+
+    private Long familyUserId;
+
+    private Long nurseUserId;
+
+    private Long doctorUserId;
+
     public String getProcessKey() { return processKey; }
     public void setProcessKey(String processKey) { this.processKey = processKey; }
     public String getBizType() { return bizType; }
     public void setBizType(String bizType) { this.bizType = bizType; }
     public Long getBizId() { return bizId; }
     public void setBizId(Long bizId) { this.bizId = bizId; }
+    public Long getElderId() { return elderId; }
+    public void setElderId(Long elderId) { this.elderId = elderId; }
+    public Long getFamilyUserId() { return familyUserId; }
+    public void setFamilyUserId(Long familyUserId) { this.familyUserId = familyUserId; }
+    public Long getNurseUserId() { return nurseUserId; }
+    public void setNurseUserId(Long nurseUserId) { this.nurseUserId = nurseUserId; }
+    public Long getDoctorUserId() { return doctorUserId; }
+    public void setDoctorUserId(Long doctorUserId) { this.doctorUserId = doctorUserId; }
 }

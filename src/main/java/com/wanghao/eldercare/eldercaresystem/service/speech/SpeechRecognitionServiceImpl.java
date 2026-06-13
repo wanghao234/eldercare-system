@@ -27,6 +27,7 @@ public class SpeechRecognitionServiceImpl implements SpeechRecognitionService {
 
     private static final Logger log = LoggerFactory.getLogger(SpeechRecognitionServiceImpl.class);
     private static final String MOCK_TEXT = "今天上午九点张三老人参加康复训练，地点在康复训练室，状态良好；下午两点组织老人参加书法活动，地点在活动室，大家参与积极；晚上七点安排健康讲座，地点在多功能厅。";
+    private static final String GENERIC_RECOGNITION_ERROR = "语音识别失败，请稍后重试";
 
     private final SpeechProperties speechProperties;
 
@@ -44,7 +45,7 @@ public class SpeechRecognitionServiceImpl implements SpeechRecognitionService {
         }
 
         SpeechProperties.TencentProperties tencent = speechProperties.getTencent();
-        if (!StringUtils.hasText(tencent.getSecretId()) || !StringUtils.hasText(tencent.getSecretKey())) {
+        if (!hasUsableCredential(tencent.getSecretId()) || !hasUsableCredential(tencent.getSecretKey())) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "腾讯云语音识别配置不完整", HttpStatus.INTERNAL_SERVER_ERROR);
         }
 
@@ -74,7 +75,7 @@ public class SpeechRecognitionServiceImpl implements SpeechRecognitionService {
             throw ex;
         } catch (Exception ex) {
             log.warn("speech recognition failed: {}", ex.getMessage(), ex);
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "语音识别失败，请稍后重试", HttpStatus.INTERNAL_SERVER_ERROR);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, GENERIC_RECOGNITION_ERROR, HttpStatus.INTERNAL_SERVER_ERROR);
         } finally {
             deleteIfExists(tempInput);
             deleteIfExists(tempOutput);
@@ -106,7 +107,7 @@ public class SpeechRecognitionServiceImpl implements SpeechRecognitionService {
         SentenceRecognitionResponse response = client.SentenceRecognition(request);
         String result = response.getResult();
         if (!StringUtils.hasText(result)) {
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "语音识别失败，请稍后重试", HttpStatus.INTERNAL_SERVER_ERROR);
+            throw badRequest("未识别到有效语音内容，请检查录音是否为空或音频格式是否正确。");
         }
         return result.trim();
     }
@@ -119,27 +120,38 @@ public class SpeechRecognitionServiceImpl implements SpeechRecognitionService {
                 return originalFilename.substring(dotIndex + 1).toLowerCase(Locale.ROOT);
             }
         }
+
+        byte[] bytes = readFileBytes(file);
+        String detectedFromHeader = detectFormatFromHeader(bytes);
+        if (detectedFromHeader != null) {
+            return detectedFromHeader;
+        }
+
         String contentType = file.getContentType();
         if (contentType != null) {
-            if (contentType.contains("webm")) {
-                return "webm";
-            }
-            if (contentType.contains("wav")) {
-                return "wav";
-            }
-            if (contentType.contains("mpeg")) {
-                return "mp3";
-            }
-            if (contentType.contains("mp4") || contentType.contains("m4a")) {
+            String normalizedContentType = contentType.toLowerCase(Locale.ROOT);
+            if (normalizedContentType.contains("x-m4a")) {
                 return "m4a";
             }
-            if (contentType.contains("aac")) {
+            if (normalizedContentType.contains("webm")) {
+                return "webm";
+            }
+            if (normalizedContentType.contains("wav")) {
+                return "wav";
+            }
+            if (normalizedContentType.contains("mpeg")) {
+                return "mp3";
+            }
+            if (normalizedContentType.contains("mp4") || normalizedContentType.contains("m4a")) {
+                return "m4a";
+            }
+            if (normalizedContentType.contains("aac")) {
                 return "aac";
             }
-            if (contentType.contains("amr")) {
+            if (normalizedContentType.contains("amr")) {
                 return "amr";
             }
-            if (contentType.contains("ogg")) {
+            if (normalizedContentType.contains("ogg")) {
                 return "ogg-opus";
             }
         }
@@ -177,7 +189,7 @@ public class SpeechRecognitionServiceImpl implements SpeechRecognitionService {
             throw badRequest("当前系统未安装 ffmpeg，请先安装 ffmpeg 后重试。");
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "语音识别失败，请稍后重试", HttpStatus.INTERNAL_SERVER_ERROR);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, GENERIC_RECOGNITION_ERROR, HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -198,6 +210,82 @@ public class SpeechRecognitionServiceImpl implements SpeechRecognitionService {
 
     private BusinessException badRequest(String message) {
         return new BusinessException(ErrorCode.BAD_REQUEST, message, HttpStatus.BAD_REQUEST);
+    }
+
+    private boolean hasUsableCredential(String value) {
+        if (!StringUtils.hasText(value)) {
+            return false;
+        }
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        return !normalized.startsWith("your_");
+    }
+
+    private byte[] readFileBytes(MultipartFile file) {
+        try {
+            return file.getBytes();
+        } catch (IOException ex) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, GENERIC_RECOGNITION_ERROR, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private String detectFormatFromHeader(byte[] bytes) {
+        if (bytes == null || bytes.length < 4) {
+            return null;
+        }
+        if (matches(bytes, 0x1A, 0x45, 0xDF, 0xA3)) {
+            return "webm";
+        }
+        if (matchesAscii(bytes, "RIFF") && bytes.length >= 12 && matchesAscii(bytes, 8, "WAVE")) {
+            return "wav";
+        }
+        if (matchesAscii(bytes, "ID3")
+                || matches(bytes, 0xFF, 0xFB)
+                || matches(bytes, 0xFF, 0xF3)
+                || matches(bytes, 0xFF, 0xF2)) {
+            return "mp3";
+        }
+        if (matchesAscii(bytes, "OggS")) {
+            return "ogg-opus";
+        }
+        if (matchesAscii(bytes, "#!AMR")) {
+            return "amr";
+        }
+        if (bytes.length >= 12 && matchesAscii(bytes, 4, "ftyp")) {
+            return "m4a";
+        }
+        if ((bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xF0) == 0xF0) {
+            return "aac";
+        }
+        return null;
+    }
+
+    private boolean matches(byte[] bytes, int... prefix) {
+        if (bytes.length < prefix.length) {
+            return false;
+        }
+        for (int i = 0; i < prefix.length; i++) {
+            if ((bytes[i] & 0xFF) != prefix[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean matchesAscii(byte[] bytes, String value) {
+        return matchesAscii(bytes, 0, value);
+    }
+
+    private boolean matchesAscii(byte[] bytes, int offset, String value) {
+        byte[] expected = value.getBytes(StandardCharsets.US_ASCII);
+        if (bytes.length < offset + expected.length) {
+            return false;
+        }
+        for (int i = 0; i < expected.length; i++) {
+            if (bytes[offset + i] != expected[i]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private String sanitizeMessage(String message) {

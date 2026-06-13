@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:flowable="http://flowable.org/bpmn"
+             targetNamespace="http://wanghao.com/eldercare/workflow">
+    <process id="admission" name="入住流程" isExecutable="true">
+        <startEvent id="start" name="开始"/>
+        <sequenceFlow id="flow_start_bind_nurse" sourceRef="start" targetRef="bind_nurse"/>
+
+        <userTask id="bind_nurse" name="绑定护理员" flowable:candidateGroups="admin"/>
+        <sequenceFlow id="flow_bind_nurse_health_assessment" sourceRef="bind_nurse" targetRef="health_assessment"/>
+
+        <userTask id="health_assessment" name="健康评估" flowable:candidateGroups="doctor"/>
+        <sequenceFlow id="flow_health_assessment_bed_confirm" sourceRef="health_assessment" targetRef="bed_confirm"/>
+
+        <userTask id="bed_confirm" name="床位确认 / 入住安排" flowable:candidateGroups="nurse"/>
+        <sequenceFlow id="flow_bed_confirm_deposit_contract_confirm" sourceRef="bed_confirm" targetRef="deposit_contract_confirm"/>
+
+        <userTask id="deposit_contract_confirm" name="押金 / 合同确认" flowable:candidateGroups="admin"/>
+        <sequenceFlow id="flow_deposit_contract_confirm_admission_confirm" sourceRef="deposit_contract_confirm" targetRef="admission_confirm"/>
+
+        <userTask id="admission_confirm" name="入住确认" flowable:candidateGroups="nurse"/>
+        <sequenceFlow id="flow_admission_confirm_end" sourceRef="admission_confirm" targetRef="completed_end"/>
+
+        <!-- TODO: 后续如需驳回/退回，在此增加网关和回退连线。 -->
+        <endEvent id="completed_end" name="完成"/>
+    </process>
+</definitions>

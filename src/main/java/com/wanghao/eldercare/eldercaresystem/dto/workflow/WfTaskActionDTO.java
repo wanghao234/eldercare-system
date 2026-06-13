@@ -16,6 +16,7 @@ import java.time.LocalDateTime;
 public class WfTaskActionDTO {
     private Long actionId;
     private Long wfTaskId;
+    private Long instanceId;
     private String action;
     private Long actorId;
     private LocalDateTime actionTime;
@@ -25,6 +26,7 @@ public class WfTaskActionDTO {
         WfTaskActionDTO dto = new WfTaskActionDTO();
         dto.setActionId(action.getActionId());
         dto.setWfTaskId(action.getWfTaskId());
+        dto.setInstanceId(action.getInstanceId());
         dto.setAction(action.getAction());
         dto.setActorId(action.getActorId());
         dto.setActionTime(action.getActionTime());
@@ -36,6 +38,8 @@ public class WfTaskActionDTO {
     public void setActionId(Long actionId) { this.actionId = actionId; }
     public Long getWfTaskId() { return wfTaskId; }
     public void setWfTaskId(Long wfTaskId) { this.wfTaskId = wfTaskId; }
+    public Long getInstanceId() { return instanceId; }
+    public void setInstanceId(Long instanceId) { this.instanceId = instanceId; }
     public String getAction() { return action; }
     public void setAction(String action) { this.action = action; }
     public Long getActorId() { return actorId; }

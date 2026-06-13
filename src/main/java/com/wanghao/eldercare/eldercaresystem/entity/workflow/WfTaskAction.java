@@ -32,6 +32,9 @@ public class WfTaskAction {
     @Column(name = "wf_task_id", nullable = false)
     private Long wfTaskId;
 
+    @Column(name = "instance_id")
+    private Long instanceId;
+
     @Column(name = "action", nullable = false, length = 32)
     private String action;
 
@@ -51,6 +54,8 @@ public class WfTaskAction {
     public void setActionId(Long actionId) { this.actionId = actionId; }
     public Long getWfTaskId() { return wfTaskId; }
     public void setWfTaskId(Long wfTaskId) { this.wfTaskId = wfTaskId; }
+    public Long getInstanceId() { return instanceId; }
+    public void setInstanceId(Long instanceId) { this.instanceId = instanceId; }
     public String getAction() { return action; }
     public void setAction(String action) { this.action = action; }
     public Long getActorId() { return actorId; }

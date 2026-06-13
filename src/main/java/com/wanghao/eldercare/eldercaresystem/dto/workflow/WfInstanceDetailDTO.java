@@ -22,6 +22,9 @@ public class WfInstanceDetailDTO {
     private String status;
     private Long startedBy;
     private LocalDateTime startedAt;
+    private LocalDateTime endedAt;
+    private String engineType;
+    private String externalInstanceId;
     private List<WfTaskDTO> tasks;
 
     public Long getInstanceId() { return instanceId; }
@@ -38,6 +41,12 @@ public class WfInstanceDetailDTO {
     public void setStartedBy(Long startedBy) { this.startedBy = startedBy; }
     public LocalDateTime getStartedAt() { return startedAt; }
     public void setStartedAt(LocalDateTime startedAt) { this.startedAt = startedAt; }
+    public LocalDateTime getEndedAt() { return endedAt; }
+    public void setEndedAt(LocalDateTime endedAt) { this.endedAt = endedAt; }
+    public String getEngineType() { return engineType; }
+    public void setEngineType(String engineType) { this.engineType = engineType; }
+    public String getExternalInstanceId() { return externalInstanceId; }
+    public void setExternalInstanceId(String externalInstanceId) { this.externalInstanceId = externalInstanceId; }
     public List<WfTaskDTO> getTasks() { return tasks; }
     public void setTasks(List<WfTaskDTO> tasks) { this.tasks = tasks; }
 }

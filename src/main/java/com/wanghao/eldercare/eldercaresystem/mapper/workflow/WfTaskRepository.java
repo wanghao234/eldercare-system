@@ -42,7 +42,7 @@ public interface WfTaskRepository extends JpaRepository<WfTask, Long> {
               and a.elderId = c.elderId
               and c.nurseId = :userId
               and c.isActive = 1
-              and t.nodeKey = 'bed_reserve'
+              and t.nodeKey = 'bed_confirm'
               and t.status in :statuses
             order by t.createdAt desc
             """)
@@ -53,6 +53,8 @@ public interface WfTaskRepository extends JpaRepository<WfTask, Long> {
     Page<WfTask> findAllByStatusIn(@Param("statuses") Collection<String> statuses, Pageable pageable);
 
     List<WfTask> findByInstanceIdOrderByCreatedAtAsc(Long instanceId);
+
+    Optional<WfTask> findByExternalTaskId(String externalTaskId);
 
     Optional<WfTask> findFirstByInstanceIdOrderByCreatedAtDesc(Long instanceId);
 

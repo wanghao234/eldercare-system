@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: jdbc:h2:mem:eldercare_test;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
+    url: jdbc:h2:mem:eldercare_test;MODE=LEGACY;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
     driver-class-name: org.h2.Driver
     username: sa
     password:
@@ -15,6 +15,15 @@ spring:
     multipart:
       max-file-size: 10MB
       max-request-size: 10MB
+
+flowable:
+  database-schema-update: true
+  async-executor-activate: false
+  history-level: full
+  check-process-definitions: true
+  process-definition-location-prefix: classpath*:/processes/
+  process-definition-location-suffixes:
+    - "**.bpmn20.xml"
 
 jwt:
   secret: "test-secret-test-secret-test-secret-123"

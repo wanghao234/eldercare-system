@@ -50,6 +50,12 @@ public class WfInstance {
     @Column(name = "ended_at")
     private LocalDateTime endedAt;
 
+    @Column(name = "engine_type", length = 32)
+    private String engineType;
+
+    @Column(name = "external_instance_id", length = 128)
+    private String externalInstanceId;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
@@ -69,6 +75,10 @@ public class WfInstance {
     public void setStartedAt(LocalDateTime startedAt) { this.startedAt = startedAt; }
     public LocalDateTime getEndedAt() { return endedAt; }
     public void setEndedAt(LocalDateTime endedAt) { this.endedAt = endedAt; }
+    public String getEngineType() { return engineType; }
+    public void setEngineType(String engineType) { this.engineType = engineType; }
+    public String getExternalInstanceId() { return externalInstanceId; }
+    public void setExternalInstanceId(String externalInstanceId) { this.externalInstanceId = externalInstanceId; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }

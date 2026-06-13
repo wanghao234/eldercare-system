@@ -27,6 +27,7 @@ import com.wanghao.eldercare.eldercaresystem.mapper.user.UserRepository;
 import com.wanghao.eldercare.eldercaresystem.service.audit.AuditService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -173,7 +174,7 @@ public class CarePlanService {
         plan.setCreatedAt(now);
         plan.setUpdatedAt(now);
         CarePlan saved = carePlanRepository.save(plan);
-        carePlanTaskGenerator.regenerate(saved, currentUser.getUserId(), 7, null);
+        carePlanTaskGenerator.regenerate(saved, currentUser.getUserId(), resolveTaskGenerationDays(saved), null);
         CarePlanDTO dto = CarePlanDTO.from(saved);
         applyAutoTaskGenerationResult(dto, carePlanTaskService.autoGenerateTasksAfterCarePlanSaved(currentUser, saved));
         return dto;
@@ -210,7 +211,7 @@ public class CarePlanService {
         applyUpsertFields(plan, request);
         plan.setUpdatedAt(now);
         CarePlan saved = carePlanRepository.save(plan);
-        carePlanTaskGenerator.regenerate(saved, currentUser.getUserId(), 7, null);
+        carePlanTaskGenerator.regenerate(saved, currentUser.getUserId(), resolveTaskGenerationDays(saved), null);
         CarePlanDTO dto = CarePlanDTO.from(saved);
         applyAutoTaskGenerationResult(dto, carePlanTaskService.autoGenerateTasksAfterCarePlanSaved(currentUser, saved));
         return dto;
@@ -528,7 +529,7 @@ public class CarePlanService {
         TaskRegenerationResult taskResult = carePlanTaskGenerator.regenerate(
                 savedPlan,
                 reviewerId,
-                7,
+                resolveTaskGenerationDays(savedPlan),
                 activeBefore == null ? null : activeBefore.getCarePlanId()
         );
         auditService.logSuccess(AuditAction.CREATE, "care_plans", savedPlan.getCarePlanId(),
@@ -790,6 +791,19 @@ public class CarePlanService {
         if (startDate != null && endDate != null && endDate.isBefore(startDate)) {
             throw badRequest("endDate 不能早于 startDate");
         }
+    }
+
+    private int resolveTaskGenerationDays(CarePlan plan) {
+        if (plan == null || plan.getEndDate() == null) {
+            return 7;
+        }
+        LocalDate today = LocalDate.now();
+        LocalDate startDate = plan.getStartDate();
+        if (startDate != null && plan.getEndDate().isBefore(startDate)) {
+            return 7;
+        }
+        long days = ChronoUnit.DAYS.between(today, plan.getEndDate()) + 1;
+        return (int) Math.max(1, Math.min(30, days));
     }
 
     private LocalDate resolveStartDate(UpsertCarePlanRequest request) {

@@ -21,6 +21,8 @@ public class CompleteWfTaskRequest {
 
     private String comment;
 
+    private Boolean approved;
+
     private JsonNode formData;
 
     private String formDataJson;
@@ -42,6 +44,8 @@ public class CompleteWfTaskRequest {
     public void setAction(String action) { this.action = action; }
     public String getComment() { return comment; }
     public void setComment(String comment) { this.comment = comment; }
+    public Boolean getApproved() { return approved; }
+    public void setApproved(Boolean approved) { this.approved = approved; }
     public JsonNode getFormData() { return formData; }
     public void setFormData(JsonNode formData) { this.formData = formData; }
     public String getFormDataJson() { return formDataJson; }

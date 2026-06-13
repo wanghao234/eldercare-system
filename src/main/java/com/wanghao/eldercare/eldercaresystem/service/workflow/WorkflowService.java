@@ -2,6 +2,7 @@ package com.wanghao.eldercare.eldercaresystem.service.workflow;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -21,15 +22,21 @@ import com.wanghao.eldercare.eldercaresystem.controller.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.dto.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.entity.alarm.Alarm;
 import com.wanghao.eldercare.eldercaresystem.entity.admission.AdmissionRecord;
+import com.wanghao.eldercare.eldercaresystem.entity.admission.Bed;
+import com.wanghao.eldercare.eldercaresystem.entity.user.User;
 import com.wanghao.eldercare.eldercaresystem.entity.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.mapper.alarm.AlarmRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.admission.AdmissionRecordRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.admission.BedRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.careteam.CareTeamAssignmentRepository;
+import com.wanghao.eldercare.eldercaresystem.mapper.user.UserRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.service.file.FileStorageService;
 import java.net.URI;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -40,6 +47,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.HashMap;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -50,6 +58,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
+import org.flowable.engine.HistoryService;
+import org.flowable.engine.RepositoryService;
+import org.flowable.engine.RuntimeService;
+import org.flowable.engine.TaskService;
+import org.flowable.engine.history.HistoricActivityInstance;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.task.api.Task;
 
 @Service
 public class WorkflowService {
@@ -59,54 +74,76 @@ public class WorkflowService {
     private final WfInstanceRepository wfInstanceRepository;
     private final WfTaskRepository wfTaskRepository;
     private final WfTaskActionRepository wfTaskActionRepository;
+    private final WfDefinitionRepository wfDefinitionRepository;
+    private final UserRepository userRepository;
     private final AlarmRepository alarmRepository;
     private final AdmissionRecordRepository admissionRecordRepository;
+    private final BedRepository bedRepository;
     private final CareTeamAssignmentRepository careTeamAssignmentRepository;
     private final PermissionService permissionService;
     private final ObjectMapper objectMapper;
     private final AdmissionWorkflowOrchestrator admissionWorkflowOrchestrator;
     private final AdmissionContractImportService admissionContractImportService;
     private final FileStorageService fileStorageService;
+    private final WorkflowInstanceService workflowInstanceService;
+    private final WorkflowTaskSyncService workflowTaskSyncService;
+    private final WorkflowActionLogService workflowActionLogService;
+    private final WorkflowUserGuard workflowUserGuard;
+    private final TaskService flowableTaskService;
+    private final RuntimeService runtimeService;
+    private final HistoryService historyService;
+    private final RepositoryService repositoryService;
 
     public WorkflowService(WfInstanceRepository wfInstanceRepository,
                            WfTaskRepository wfTaskRepository,
                            WfTaskActionRepository wfTaskActionRepository,
+                           WfDefinitionRepository wfDefinitionRepository,
+                           UserRepository userRepository,
                            AlarmRepository alarmRepository,
                            AdmissionRecordRepository admissionRecordRepository,
+                           BedRepository bedRepository,
                            CareTeamAssignmentRepository careTeamAssignmentRepository,
                            PermissionService permissionService,
                            ObjectMapper objectMapper,
                            AdmissionWorkflowOrchestrator admissionWorkflowOrchestrator,
                            AdmissionContractImportService admissionContractImportService,
-                           FileStorageService fileStorageService) {
+                           FileStorageService fileStorageService,
+                           WorkflowInstanceService workflowInstanceService,
+                           WorkflowTaskSyncService workflowTaskSyncService,
+                           WorkflowActionLogService workflowActionLogService,
+                           WorkflowUserGuard workflowUserGuard,
+                           TaskService flowableTaskService,
+                           RuntimeService runtimeService,
+                           HistoryService historyService,
+                           RepositoryService repositoryService) {
         this.wfInstanceRepository = wfInstanceRepository;
         this.wfTaskRepository = wfTaskRepository;
         this.wfTaskActionRepository = wfTaskActionRepository;
+        this.wfDefinitionRepository = wfDefinitionRepository;
+        this.userRepository = userRepository;
         this.alarmRepository = alarmRepository;
         this.admissionRecordRepository = admissionRecordRepository;
+        this.bedRepository = bedRepository;
         this.careTeamAssignmentRepository = careTeamAssignmentRepository;
         this.permissionService = permissionService;
         this.objectMapper = objectMapper;
         this.admissionWorkflowOrchestrator = admissionWorkflowOrchestrator;
         this.admissionContractImportService = admissionContractImportService;
         this.fileStorageService = fileStorageService;
+        this.workflowInstanceService = workflowInstanceService;
+        this.workflowTaskSyncService = workflowTaskSyncService;
+        this.workflowActionLogService = workflowActionLogService;
+        this.workflowUserGuard = workflowUserGuard;
+        this.flowableTaskService = flowableTaskService;
+        this.runtimeService = runtimeService;
+        this.historyService = historyService;
+        this.repositoryService = repositoryService;
     }
 
     @Transactional
     public CreateWfInstanceResponse createInstance(CurrentUser currentUser, CreateWfInstanceRequest request) {
-        WfInstance instance = new WfInstance();
-        instance.setProcessKey(request.getProcessKey());
-        instance.setBizType(request.getBizType());
-        instance.setBizId(request.getBizId());
-        instance.setStatus("running");
-        instance.setStartedBy(currentUser.getUserId());
-
-        LocalDateTime now = LocalDateTime.now();
-        instance.setStartedAt(now);
-        instance.setCreatedAt(now);
-
-        WfInstance saved = wfInstanceRepository.save(instance);
-        return new CreateWfInstanceResponse(saved.getInstanceId());
+        workflowUserGuard.requireActive(currentUser);
+        return workflowInstanceService.start(currentUser, request);
     }
 
     @Transactional(readOnly = true)
@@ -116,6 +153,65 @@ public class WorkflowService {
 
         ensureCanAccessInstance(currentUser, instance);
         return toDetail(instance);
+    }
+
+    @Transactional
+    public WfInstanceDetailDTO getInstanceById(CurrentUser currentUser, Long instanceId) {
+        WfInstance instance = wfInstanceRepository.findById(instanceId)
+                .orElseThrow(() -> new NotFoundException("流程实例不存在"));
+        ensureCanAccessInstance(currentUser, instance);
+        workflowTaskSyncService.syncOpenTasks(instance, currentUser.getUserId());
+        return toDetail(instance);
+    }
+
+    @Transactional
+    public List<WfTaskDTO> listInstanceTasks(CurrentUser currentUser, Long instanceId) {
+        WfInstance instance = wfInstanceRepository.findById(instanceId)
+                .orElseThrow(() -> new NotFoundException("流程实例不存在"));
+        ensureCanAccessInstance(currentUser, instance);
+        workflowTaskSyncService.syncOpenTasks(instance, currentUser.getUserId());
+        return wfTaskRepository.findByInstanceIdOrderByCreatedAtAsc(instanceId)
+                .stream()
+                .map(this::enrichTask)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<WfTaskActionDTO> listInstanceActions(CurrentUser currentUser, Long instanceId) {
+        WfInstance instance = wfInstanceRepository.findById(instanceId)
+                .orElseThrow(() -> new NotFoundException("流程实例不存在"));
+        ensureCanAccessInstance(currentUser, instance);
+        return wfTaskActionRepository.findByInstanceIdOrderByActionTimeAsc(instanceId)
+                .stream()
+                .map(WfTaskActionDTO::from)
+                .toList();
+    }
+
+    @Transactional
+    public WfInstanceDiagramDTO getInstanceDiagram(CurrentUser currentUser, Long instanceId) {
+        WfInstance instance = wfInstanceRepository.findById(instanceId)
+                .orElseThrow(() -> new NotFoundException("流程实例不存在"));
+        ensureCanAccessInstance(currentUser, instance);
+        workflowTaskSyncService.syncOpenTasks(instance, currentUser.getUserId());
+
+        WfInstanceDiagramDTO dto = new WfInstanceDiagramDTO();
+        dto.setInstanceId(instance.getInstanceId());
+        dto.setProcessKey(instance.getProcessKey());
+        dto.setBizType(instance.getBizType());
+        dto.setBizId(instance.getBizId());
+        dto.setStatus(instance.getStatus());
+        dto.setBpmnXml(resolveBpmnXml(instance));
+        dto.setActiveNodeKeys(resolveActiveNodeKeys(instance));
+        dto.setCompletedNodeKeys(resolveCompletedNodeKeys(instance));
+        dto.setTaskNodes(wfTaskRepository.findByInstanceIdOrderByCreatedAtAsc(instanceId)
+                .stream()
+                .map(this::enrichTask)
+                .toList());
+        dto.setActionLogs(wfTaskActionRepository.findByInstanceIdOrderByActionTimeAsc(instanceId)
+                .stream()
+                .map(WfTaskActionDTO::from)
+                .toList());
+        return dto;
     }
 
     @Transactional(readOnly = true)
@@ -134,7 +230,7 @@ public class WorkflowService {
             int fromIndex = Math.min(Math.max(page, 0) * size, tasks.size());
             int toIndex = Math.min(fromIndex + size, tasks.size());
             WfTaskListResponse response = new WfTaskListResponse();
-            response.setContent(tasks.subList(fromIndex, toIndex).stream().map(WfTaskDTO::from).toList());
+            response.setContent(tasks.subList(fromIndex, toIndex).stream().map(this::enrichTask).toList());
             response.setTotalElements(tasks.size());
             response.setPage(page);
             response.setSize(size);
@@ -144,7 +240,7 @@ public class WorkflowService {
         }
 
         WfTaskListResponse response = new WfTaskListResponse();
-        response.setContent(taskPage.getContent().stream().map(WfTaskDTO::from).toList());
+        response.setContent(taskPage.getContent().stream().map(this::enrichTask).toList());
         response.setTotalElements(taskPage.getTotalElements());
         response.setPage(page);
         response.setSize(size);
@@ -153,6 +249,7 @@ public class WorkflowService {
 
     @Transactional
     public WfTaskDTO claim(CurrentUser currentUser, Long wfTaskId) {
+        workflowUserGuard.requireActive(currentUser);
         WfTask task = wfTaskRepository.findById(wfTaskId)
                 .orElseThrow(() -> new NotFoundException("流程任务不存在"));
 
@@ -166,6 +263,22 @@ public class WorkflowService {
         }
 
         LocalDateTime now = LocalDateTime.now();
+        if (StringUtils.hasText(task.getExternalTaskId())) {
+            ensureCanClaimFlowableTask(currentUser, task);
+            try {
+                flowableTaskService.claim(task.getExternalTaskId(), String.valueOf(currentUser.getUserId()));
+            } catch (Exception ex) {
+                throw badRequest("Flowable 任务领取失败: " + ex.getMessage());
+            }
+            task.setStatus("claimed");
+            task.setAssigneeId(currentUser.getUserId());
+            task.setClaimedAt(now);
+            wfTaskRepository.save(task);
+            WfTask savedTask = loadTask(wfTaskId);
+            workflowActionLogService.log(savedTask, "claim", currentUser.getUserId(), "领取任务", null, null, now);
+            return enrichTask(savedTask);
+        }
+
         int updated = wfTaskRepository.claimIfPending(wfTaskId, currentUser.getUserId(), now);
         if (updated == 0) {
             String currentStatus = wfTaskRepository.findById(wfTaskId).map(WfTask::getStatus).orElse("unknown");
@@ -178,12 +291,13 @@ public class WorkflowService {
 
     @Transactional
     public WfTaskDTO complete(CurrentUser currentUser, Long wfTaskId, CompleteWfTaskRequest request) {
+        workflowUserGuard.requireActive(currentUser);
         WfTask task = wfTaskRepository.findById(wfTaskId)
                 .orElseThrow(() -> new NotFoundException("流程任务不存在"));
         WfInstance instance = wfInstanceRepository.findById(task.getInstanceId())
                 .orElseThrow(() -> new NotFoundException("流程实例不存在"));
 
-        if ("admission".equalsIgnoreCase(instance.getProcessKey())) {
+        if ("admission".equalsIgnoreCase(instance.getProcessKey()) && !StringUtils.hasText(task.getExternalTaskId())) {
             return admissionWorkflowOrchestrator.complete(currentUser, wfTaskId, request, task, instance);
         }
 
@@ -205,6 +319,16 @@ public class WorkflowService {
         String formDataJson = toJson(effectiveFormData);
         String attachmentsJson = toJson(request.getAttachments());
         LocalDateTime now = LocalDateTime.now();
+
+        if (StringUtils.hasText(task.getExternalTaskId())) {
+            ensureCanCompleteFlowableProjection(currentUser, task);
+            completeFlowableTask(currentUser, task, instance, request, effectiveFormData, formDataJson, attachmentsJson, now);
+            WfTask savedTask = loadTask(wfTaskId);
+            String action = resolveAction(request);
+            workflowActionLogService.log(savedTask, action, currentUser.getUserId(), request.getComment(), formDataJson, attachmentsJson, now);
+            workflowTaskSyncService.syncOpenTasks(instance, currentUser.getUserId());
+            return enrichTask(loadTask(wfTaskId));
+        }
 
         int updated = wfTaskRepository.completeIfPendingOrClaimed(
                 wfTaskId,
@@ -375,11 +499,252 @@ public class WorkflowService {
 
     private WfTaskDTO enrichTask(WfTask task) {
         WfTaskDTO dto = WfTaskDTO.from(task);
+        wfInstanceRepository.findById(task.getInstanceId()).ifPresent(instance -> {
+            dto.setProcessKey(instance.getProcessKey());
+            dto.setBizType(instance.getBizType());
+            dto.setBizId(instance.getBizId());
+        });
+        if (task.getAssigneeId() != null) {
+            userRepository.findByUserIdAndDeletedAtIsNull(task.getAssigneeId())
+                    .map(User::getRealName)
+                    .filter(StringUtils::hasText)
+                    .ifPresent(dto::setAssigneeName);
+        }
         dto.setActions(wfTaskActionRepository.findByWfTaskIdOrderByActionTimeAsc(task.getWfTaskId())
                 .stream()
                 .map(WfTaskActionDTO::from)
                 .toList());
         return dto;
+    }
+
+    private void completeFlowableTask(CurrentUser currentUser,
+                                      WfTask task,
+                                      WfInstance instance,
+                                      CompleteWfTaskRequest request,
+                                      JsonNode effectiveFormData,
+                                      String formDataJson,
+                                      String attachmentsJson,
+                                      LocalDateTime now) {
+        Task flowableTask = flowableTaskService.createTaskQuery().taskId(task.getExternalTaskId()).singleResult();
+        if (flowableTask == null) {
+            throw badRequest("Flowable 任务不存在或已完成");
+        }
+        if (StringUtils.hasText(flowableTask.getAssignee())
+                && !String.valueOf(currentUser.getUserId()).equals(flowableTask.getAssignee())) {
+            throw new AccessDeniedException("任务已被他人领取");
+        }
+        Map<String, Object> variables = buildFlowableVariables(request, effectiveFormData);
+        try {
+            if (!StringUtils.hasText(flowableTask.getAssignee())) {
+                flowableTaskService.claim(task.getExternalTaskId(), String.valueOf(currentUser.getUserId()));
+                task.setAssigneeId(currentUser.getUserId());
+                task.setClaimedAt(now);
+            }
+            applyAdmissionBusinessSideEffects(task, instance, formDataJson, now);
+            flowableTaskService.complete(task.getExternalTaskId(), variables);
+        } catch (Exception ex) {
+            throw badRequest("Flowable 任务完成失败: " + ex.getMessage());
+        }
+        workflowTaskSyncService.markCompleted(task, request.getComment(), formDataJson, attachmentsJson, now);
+    }
+
+    private void applyAdmissionBusinessSideEffects(WfTask task, WfInstance instance, String formDataJson, LocalDateTime now) {
+        if (!"admission".equalsIgnoreCase(instance.getProcessKey())) {
+            return;
+        }
+        AdmissionRecord admission = admissionRecordRepository.findById(instance.getBizId()).orElse(null);
+        if (admission == null) {
+            return;
+        }
+        if ("bed_confirm".equalsIgnoreCase(task.getNodeKey())) {
+            Long confirmBedId = readLongFromJson(formDataJson, "confirmBedId");
+            if (confirmBedId != null && !confirmBedId.equals(admission.getBedId())) {
+                admission.setBedId(confirmBedId);
+                admission.setUpdatedAt(now);
+                admissionRecordRepository.save(admission);
+            }
+            return;
+        }
+        if ("deposit_contract_confirm".equalsIgnoreCase(task.getNodeKey())) {
+            applyDepositContractConfirm(admission, formDataJson, now);
+            return;
+        }
+        if ("admission_confirm".equalsIgnoreCase(task.getNodeKey())) {
+            int admissionUpdated = admissionRecordRepository.activateIfPending(admission.getAdmissionId(), now);
+            if (admissionUpdated == 0) {
+                throw badRequest("入住状态不匹配，仅允许 pending -> active");
+            }
+            int bedUpdated = bedRepository.occupyIfReserved(admission.getBedId());
+            if (bedUpdated == 0) {
+                Bed bed = bedRepository.findById(admission.getBedId()).orElseThrow(() -> new NotFoundException("床位不存在"));
+                throw badRequest("床位状态不匹配，当前状态=" + bed.getStatus());
+            }
+        }
+    }
+
+    private void applyDepositContractConfirm(AdmissionRecord admission, String formDataJson, LocalDateTime now) {
+        try {
+            JsonNode node = StringUtils.hasText(formDataJson) ? objectMapper.readTree(formDataJson) : null;
+            if (node == null || !node.isObject()) {
+                return;
+            }
+            if (node.has("depositAmount") && !node.get("depositAmount").isNull()) {
+                admission.setDepositAmount(node.get("depositAmount").decimalValue());
+            }
+            if (node.has("contractNo") && !node.get("contractNo").isNull()) {
+                admission.setContractNo(node.get("contractNo").asText());
+            }
+            if (node.has("packageName") && !node.get("packageName").isNull()) {
+                admission.setPackageName(node.get("packageName").asText());
+            }
+            admission.setUpdatedAt(now);
+            admissionRecordRepository.save(admission);
+        } catch (JsonProcessingException ex) {
+            throw badRequest("formDataJson 格式非法");
+        }
+    }
+
+    private Long readLongFromJson(String json, String field) {
+        if (!StringUtils.hasText(json)) {
+            return null;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(json);
+            if (!node.has(field) || node.get(field).isNull()) {
+                return null;
+            }
+            JsonNode value = node.get(field);
+            if (value.isNumber()) {
+                return value.longValue();
+            }
+            if (value.isTextual() && value.asText().matches("\\d+")) {
+                return Long.parseLong(value.asText());
+            }
+            throw badRequest(field + " 格式非法");
+        } catch (JsonProcessingException ex) {
+            throw badRequest("formDataJson 格式非法");
+        }
+    }
+
+    private Map<String, Object> buildFlowableVariables(CompleteWfTaskRequest request, JsonNode formData) {
+        Map<String, Object> variables = new HashMap<>();
+        if (formData != null && formData.isObject()) {
+            variables.putAll(objectMapper.convertValue(formData, new TypeReference<Map<String, Object>>() {}));
+        }
+        if (request.getApproved() != null) {
+            variables.put("approved", request.getApproved());
+        }
+        String action = request.getAction() == null ? "" : request.getAction().toLowerCase(Locale.ROOT);
+        if ("approve".equals(action) || "approved".equals(action)) {
+            variables.put("approved", true);
+        } else if ("reject".equals(action) || "rejected".equals(action)) {
+            variables.put("approved", false);
+        }
+        return variables;
+    }
+
+    private String resolveAction(CompleteWfTaskRequest request) {
+        if (request.getAction() != null && !request.getAction().isBlank()) {
+            return request.getAction().toLowerCase(Locale.ROOT);
+        }
+        if (Boolean.TRUE.equals(request.getApproved())) {
+            return "approve";
+        }
+        if (Boolean.FALSE.equals(request.getApproved())) {
+            return "reject";
+        }
+        JsonNode formData = request.getFormData();
+        if (formData != null && formData.has("approved")) {
+            return formData.path("approved").asBoolean() ? "approve" : "reject";
+        }
+        return "complete";
+    }
+
+    private void ensureCanClaimFlowableTask(CurrentUser currentUser, WfTask task) {
+        if (task.getAssigneeId() != null) {
+            if (!task.getAssigneeId().equals(currentUser.getUserId())) {
+                throw new AccessDeniedException("任务已指派给其他办理人");
+            }
+            return;
+        }
+        if (!StringUtils.hasText(task.getCandidateRole())) {
+            throw new AccessDeniedException("任务未配置候选角色");
+        }
+        if (!task.getCandidateRole().equalsIgnoreCase(currentUser.getRole())) {
+            throw new AccessDeniedException("当前角色无权限领取该任务");
+        }
+    }
+
+    private void ensureCanCompleteFlowableProjection(CurrentUser currentUser, WfTask task) {
+        if (task.getAssigneeId() != null) {
+            if (!task.getAssigneeId().equals(currentUser.getUserId())) {
+                throw new AccessDeniedException("仅任务办理人可完成该任务");
+            }
+            return;
+        }
+        if (!StringUtils.hasText(task.getCandidateRole())
+                || !task.getCandidateRole().equalsIgnoreCase(currentUser.getRole())) {
+            throw new AccessDeniedException("当前角色无权限完成该任务");
+        }
+    }
+
+    private String resolveBpmnXml(WfInstance instance) {
+        if (StringUtils.hasText(instance.getExternalInstanceId())) {
+            ProcessDefinition definition = repositoryService.createProcessDefinitionQuery()
+                    .processDefinitionKey(instance.getProcessKey())
+                    .latestVersion()
+                    .singleResult();
+            String xml = readBpmnXml(definition);
+            if (StringUtils.hasText(xml)) {
+                return xml;
+            }
+        }
+        return wfDefinitionRepository.findFirstByProcessKeyOrderByVersionDesc(instance.getProcessKey())
+                .map(WfDefinition::getDefinitionJson)
+                .orElse(null);
+    }
+
+    private String readBpmnXml(ProcessDefinition definition) {
+        if (definition == null) {
+            return null;
+        }
+        try (var stream = repositoryService.getResourceAsStream(
+                definition.getDeploymentId(),
+                definition.getResourceName())) {
+            if (stream == null) {
+                return null;
+            }
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException ex) {
+            return null;
+        }
+    }
+
+    private List<String> resolveActiveNodeKeys(WfInstance instance) {
+        if (!StringUtils.hasText(instance.getExternalInstanceId())
+                || runtimeService.createProcessInstanceQuery()
+                .processInstanceId(instance.getExternalInstanceId())
+                .singleResult() == null) {
+            return List.of();
+        }
+        return runtimeService.getActiveActivityIds(instance.getExternalInstanceId());
+    }
+
+    private List<String> resolveCompletedNodeKeys(WfInstance instance) {
+        if (!StringUtils.hasText(instance.getExternalInstanceId())) {
+            return List.of();
+        }
+        return historyService.createHistoricActivityInstanceQuery()
+                .processInstanceId(instance.getExternalInstanceId())
+                .activityType("userTask")
+                .finished()
+                .orderByHistoricActivityInstanceEndTime()
+                .asc()
+                .list()
+                .stream()
+                .map(HistoricActivityInstance::getActivityId)
+                .distinct()
+                .toList();
     }
 
     private WfInstanceDetailDTO toDetail(WfInstance instance) {
@@ -391,6 +756,9 @@ public class WorkflowService {
         dto.setStatus(instance.getStatus());
         dto.setStartedBy(instance.getStartedBy());
         dto.setStartedAt(instance.getStartedAt());
+        dto.setEndedAt(instance.getEndedAt());
+        dto.setEngineType(instance.getEngineType());
+        dto.setExternalInstanceId(instance.getExternalInstanceId());
 
         List<WfTaskDTO> taskDTOList = wfTaskRepository.findByInstanceIdOrderByCreatedAtAsc(instance.getInstanceId())
                 .stream()
@@ -482,7 +850,7 @@ public class WorkflowService {
         return instance != null
                 && "admission".equalsIgnoreCase(instance.getBizType())
                 && task != null
-                && "health_assess".equalsIgnoreCase(task.getNodeKey());
+                && "health_assessment".equalsIgnoreCase(task.getNodeKey());
     }
 
     private boolean isAdmissionCareTeamBedReserveTask(CurrentUser currentUser, WfInstance instance, WfTask task) {
@@ -490,7 +858,7 @@ public class WorkflowService {
                 && instance != null
                 && task != null
                 && "admission".equalsIgnoreCase(instance.getBizType())
-                && "bed_reserve".equalsIgnoreCase(task.getNodeKey())
+                && "bed_confirm".equalsIgnoreCase(task.getNodeKey())
                 && isAdmissionCareTeamMember(currentUser, instance.getBizId());
     }
 
@@ -544,6 +912,7 @@ public class WorkflowService {
                             LocalDateTime actionTime) {
         WfTaskAction wfTaskAction = new WfTaskAction();
         wfTaskAction.setWfTaskId(wfTaskId);
+        wfTaskRepository.findById(wfTaskId).map(WfTask::getInstanceId).ifPresent(wfTaskAction::setInstanceId);
         wfTaskAction.setAction(action);
         wfTaskAction.setActorId(actorId);
         wfTaskAction.setActionTime(actionTime);

@@ -492,15 +492,27 @@ public class CarePlanTaskService {
         if (tasks.isEmpty()) {
             return;
         }
+        List<CarePlanTask> draftTasks = tasks.stream()
+                .filter(task -> "draft".equalsIgnoreCase(task.getStatus()))
+                .toList();
+        if (!draftTasks.isEmpty()) {
+            carePlanTaskRepository.deleteAllInBatch(draftTasks);
+            carePlanTaskRepository.flush();
+        }
         LocalDateTime now = LocalDateTime.now();
-        for (CarePlanTask task : tasks) {
+        List<CarePlanTask> cancellableTasks = tasks.stream()
+                .filter(task -> !"draft".equalsIgnoreCase(task.getStatus()))
+                .toList();
+        for (CarePlanTask task : cancellableTasks) {
             task.setStatus("cancelled");
             if (!StringUtils.hasText(task.getExecutionResult())) {
                 task.setExecutionResult("随护理计划删除自动取消");
             }
             task.setUpdatedAt(now);
         }
-        carePlanTaskRepository.saveAll(tasks);
+        if (!cancellableTasks.isEmpty()) {
+            carePlanTaskRepository.saveAll(cancellableTasks);
+        }
     }
 
     private int softDeleteTask(CarePlanTask task) {
@@ -618,9 +630,11 @@ public class CarePlanTaskService {
             List<CarePlanTask> existingTasks = carePlanTaskRepository.findAllByCarePlanIdOrderByScheduledAtAscCreatedAtAscTaskIdAsc(plan.getCarePlanId());
             boolean hasOnlyDraft = existingTasks.stream().allMatch(task -> "draft".equalsIgnoreCase(task.getStatus()));
             if (hasOnlyDraft) {
-                return TaskGenerationOutcome.skipped(plan.getCarePlanId(), "该护理计划已存在待确认任务，请先确认或取消后再重新生成");
+                carePlanTaskRepository.deleteAllInBatch(existingTasks);
+                carePlanTaskRepository.flush();
+            } else {
+                return TaskGenerationOutcome.skipped(plan.getCarePlanId(), "该护理计划已存在护理任务，跳过自动生成");
             }
-            return TaskGenerationOutcome.skipped(plan.getCarePlanId(), "该护理计划已存在护理任务，跳过自动生成");
         }
 
         List<CarePlanTaskDraft> drafts = buildTaskDrafts(plan);

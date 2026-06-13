@@ -11,7 +11,9 @@ import com.wanghao.eldercare.eldercaresystem.controller.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.dto.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.entity.workflow.*;
 import com.wanghao.eldercare.eldercaresystem.service.workflow.*;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface WfDefinitionRepository extends JpaRepository<WfDefinition, Long> {
+    Optional<WfDefinition> findFirstByProcessKeyOrderByVersionDesc(String processKey);
 }

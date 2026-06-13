@@ -60,11 +60,41 @@ public class WorkflowController {
         return ApiResponse.ok(workflowService.createInstance(currentUser, request));
     }
 
+    @PostMapping("/instances/start")
+    public ApiResponse<CreateWfInstanceResponse> startInstance(@Valid @RequestBody CreateWfInstanceRequest request) {
+        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        return ApiResponse.ok(workflowService.createInstance(currentUser, request));
+    }
+
     @GetMapping("/instances")
     public ApiResponse<WfInstanceDetailDTO> getInstance(@RequestParam String bizType,
                                                          @RequestParam Long bizId) {
         CurrentUser currentUser = currentUserUtils.getCurrentUser();
         return ApiResponse.ok(workflowService.getInstanceByBiz(currentUser, bizType, bizId));
+    }
+
+    @GetMapping("/instances/{instanceId}")
+    public ApiResponse<WfInstanceDetailDTO> getInstanceById(@PathVariable Long instanceId) {
+        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        return ApiResponse.ok(workflowService.getInstanceById(currentUser, instanceId));
+    }
+
+    @GetMapping("/instances/{instanceId}/tasks")
+    public ApiResponse<List<WfTaskDTO>> getInstanceTasks(@PathVariable Long instanceId) {
+        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        return ApiResponse.ok(workflowService.listInstanceTasks(currentUser, instanceId));
+    }
+
+    @GetMapping("/instances/{instanceId}/actions")
+    public ApiResponse<List<WfTaskActionDTO>> getInstanceActions(@PathVariable Long instanceId) {
+        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        return ApiResponse.ok(workflowService.listInstanceActions(currentUser, instanceId));
+    }
+
+    @GetMapping("/instances/{instanceId}/diagram")
+    public ApiResponse<WfInstanceDiagramDTO> getInstanceDiagram(@PathVariable Long instanceId) {
+        CurrentUser currentUser = currentUserUtils.getCurrentUser();
+        return ApiResponse.ok(workflowService.getInstanceDiagram(currentUser, instanceId));
     }
 
     @GetMapping("/tasks/my")

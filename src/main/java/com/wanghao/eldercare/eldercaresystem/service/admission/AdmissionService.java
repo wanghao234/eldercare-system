@@ -36,6 +36,7 @@ import com.wanghao.eldercare.eldercaresystem.mapper.user.UserRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.workflow.WfInstanceRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.workflow.WfTaskActionRepository;
 import com.wanghao.eldercare.eldercaresystem.mapper.workflow.WfTaskRepository;
+import com.wanghao.eldercare.eldercaresystem.service.workflow.WorkflowInstanceService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -77,6 +78,7 @@ public class AdmissionService {
     private final WfInstanceRepository wfInstanceRepository;
     private final WfTaskRepository wfTaskRepository;
     private final WfTaskActionRepository wfTaskActionRepository;
+    private final WorkflowInstanceService workflowInstanceService;
 
     public AdmissionService(AdmissionRecordRepository admissionRecordRepository,
                             DischargeRecordRepository dischargeRecordRepository,
@@ -93,7 +95,8 @@ public class AdmissionService {
                             ObjectMapper objectMapper,
                             WfInstanceRepository wfInstanceRepository,
                             WfTaskRepository wfTaskRepository,
-                            WfTaskActionRepository wfTaskActionRepository) {
+                            WfTaskActionRepository wfTaskActionRepository,
+                            WorkflowInstanceService workflowInstanceService) {
         this.admissionRecordRepository = admissionRecordRepository;
         this.dischargeRecordRepository = dischargeRecordRepository;
         this.bedRepository = bedRepository;
@@ -110,6 +113,7 @@ public class AdmissionService {
         this.wfInstanceRepository = wfInstanceRepository;
         this.wfTaskRepository = wfTaskRepository;
         this.wfTaskActionRepository = wfTaskActionRepository;
+        this.workflowInstanceService = workflowInstanceService;
     }
 
     @Transactional
@@ -162,35 +166,18 @@ public class AdmissionService {
     }
 
     private Long createAdmissionWorkflow(AdmissionRecord admission, Long startedBy, LocalDateTime now) {
-        WfInstance instance = new WfInstance();
-        instance.setProcessKey("admission");
-        instance.setBizType("admission");
-        instance.setBizId(admission.getAdmissionId());
-        instance.setStatus("running");
-        instance.setStartedBy(startedBy);
-        instance.setStartedAt(now);
-        instance.setCreatedAt(now);
-        WfInstance savedInstance = wfInstanceRepository.save(instance);
-        trySetDefVersion(savedInstance.getInstanceId(), 1);
-
-        WfTask firstTask = new WfTask();
-        firstTask.setInstanceId(savedInstance.getInstanceId());
-        firstTask.setNodeKey("assign_nurse");
-        firstTask.setTaskName("绑定护理员");
-        firstTask.setCandidateRole("nurse_leader");
-        firstTask.setStatus("pending");
-        firstTask.setDueAt(now.plusHours(FIRST_TASK_DUE_HOURS));
-        firstTask.setCreatedAt(now);
-        WfTask savedTask = wfTaskRepository.save(firstTask);
-
-        WfTaskAction action = new WfTaskAction();
-        action.setWfTaskId(savedTask.getWfTaskId());
-        action.setAction("create");
-        action.setActorId(startedBy);
-        action.setActionTime(now);
-        action.setComment("创建入住流程并生成首节点");
-        wfTaskActionRepository.save(action);
-        return savedInstance.getInstanceId();
+        Map<String, Object> variables = new LinkedHashMap<>();
+        variables.put("elderId", admission.getElderId());
+        variables.put("bedId", admission.getBedId());
+        variables.put("admissionId", admission.getAdmissionId());
+        WfInstance instance = workflowInstanceService.start(
+                "admission",
+                "admission",
+                admission.getAdmissionId(),
+                startedBy,
+                variables
+        );
+        return instance.getInstanceId();
     }
 
     private void trySetDefVersion(Long instanceId, int defVersion) {

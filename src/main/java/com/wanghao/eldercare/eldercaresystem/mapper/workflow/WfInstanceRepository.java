@@ -22,6 +22,8 @@ import org.springframework.data.repository.query.Param;
 public interface WfInstanceRepository extends JpaRepository<WfInstance, Long> {
     Optional<WfInstance> findByBizTypeAndBizId(String bizType, Long bizId);
 
+    Optional<WfInstance> findByExternalInstanceId(String externalInstanceId);
+
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Transactional
     @Query("update WfInstance i set i.status='completed', i.endedAt=:endedAt where i.instanceId=:instanceId and i.status='running'")
